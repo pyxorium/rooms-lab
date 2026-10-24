@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Rooms lab (dev)</title>
+  <link rel="stylesheet" href="/src/room.css">
+  <style>html, body { margin: 0; background: #171411; }</style>
+</head>
+<body>
+  <div id="room"></div>
+  <script type="module">
+    import { mountRoomPage } from '/src/room-page.js';
+    // For the checks and the console: window.__roomsLab.room is what the page knows right now.
+    window.__roomsLab = mountRoomPage(document.getElementById('room'));
+  </script>
+</body>
+</html>

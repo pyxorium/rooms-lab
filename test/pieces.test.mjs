@@ -1,0 +1,80 @@
+// The page's small pieces on their own: formats (the same as the relay's), links, the presenter rule,
+// and the checks on what other pages send.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as page from '../src/formats.js';
+import * as relay from '../relay/rooms.js';
+import { afterAnnounce, afterPeople } from '../src/presenting.js';
+import { readPeerData } from '../src/messages.js';
+import { relayUrl, RELAY_URL, LOCAL_RELAY_URL } from '../src/config.js';
+
+test('the page checks codes, ids, keys and names exactly as the relay does', () => {
+  const samples = ['', 'abc', 'abcdefghij', 'abc def ghij', 'ABCdef-_09', 'x'.repeat(64), 'x'.repeat(65), 'é'.repeat(12), null, 42,
+    'h'.repeat(31), 'h'.repeat(32), 'h'.repeat(128), 'h'.repeat(129), 'peer-1', 'peer-123'];
+  for (const s of samples) {
+    assert.equal(page.isRoomCode(s), relay.isRoomCode(s), `room ${s}`);
+    assert.equal(page.isPeerId(s), relay.isPeerId(s), `peer ${s}`);
+    assert.equal(page.isHostKey(s), relay.isHostKey(s), `key ${s}`);
+  }
+  for (const n of [' Ana ', '', '   ', 'x'.repeat(40), 'x'.repeat(41), 'a\nb', 'a b', '🌩️ Nick', '<b>x</b>', 7]) assert.equal(page.cleanName(n), relay.cleanName(n), `name ${n}`);
+});
+
+test('new room codes and peer ids are random and the relay accepts them', () => {
+  const codes = new Set(Array.from({ length: 50 }, page.newRoomCode));
+  assert.equal(codes.size, 50);
+  for (const c of codes) { assert.match(c, /^[a-km-z2-9]{12}$/); assert.ok(relay.isRoomCode(c)); }
+  for (let i = 0; i < 20; i++) assert.ok(relay.isPeerId(page.newPeerId()));
+});
+
+test('room links: an invite carries only the room; the host link adds the key; ?relay= goes along on this computer only', () => {
+  const key = 'K'.repeat(43);
+  const local = new URL('http://127.0.0.1:5190/?relay=ws%3A%2F%2F127.0.0.1%3A9000%2F&other=1#old');
+  assert.equal(page.inviteLink(local, 'abcdefghjkmn'), 'http://127.0.0.1:5190/?relay=ws%3A%2F%2F127.0.0.1%3A9000%2F#r=abcdefghjkmn');
+  const live = new URL('https://thunderbird.cafe/webtiles/rooms-lab/?relay=wss://evil.example/');
+  assert.equal(page.inviteLink(live, 'abcdefghjkmn'), 'https://thunderbird.cafe/webtiles/rooms-lab/#r=abcdefghjkmn');
+  assert.equal(page.hostLink(live, 'abcdefghjkmn', key), `https://thunderbird.cafe/webtiles/rooms-lab/#r=abcdefghjkmn&k=${key}`);
+  assert.deepEqual(page.readRoomHash(`#r=abcdefghjkmn&k=${key}`), { room: 'abcdefghjkmn', hostKey: key });
+  assert.deepEqual(page.readRoomHash('#r=abcdefghjkmn'), { room: 'abcdefghjkmn', hostKey: null });
+  assert.deepEqual(page.readRoomHash('#r=short&k=nope'), { room: null, hostKey: null });
+  assert.deepEqual(page.readRoomHash(''), { room: null, hostKey: null });
+});
+
+test('which relay: the real one on the live page and the site\'s dev server; the local one on the lab\'s dev page; ?relay= only on this computer', () => {
+  assert.equal(relayUrl(new URL('https://thunderbird.cafe/webtiles/rooms-lab/?relay=ws://x/')), RELAY_URL);
+  assert.equal(relayUrl(new URL('http://127.0.0.1:4321/webtiles/rooms-lab/')), RELAY_URL);
+  assert.equal(relayUrl(new URL('http://127.0.0.1:5190/')), LOCAL_RELAY_URL);
+  assert.equal(relayUrl(new URL('http://127.0.0.1:5190/?relay=ws://127.0.0.1:9/')), 'ws://127.0.0.1:9/');
+  assert.equal(relayUrl(new URL('http://127.0.0.1:5190/?relay=javascript:alert(1)')), LOCAL_RELAY_URL);
+});
+
+test('one presenter at a time: start, stop, someone else\'s stop changes nothing, two at once → the smaller id, leaving clears', () => {
+  assert.equal(afterAnnounce(null, 'bbbbbbbb', true), 'bbbbbbbb');
+  assert.equal(afterAnnounce('bbbbbbbb', 'bbbbbbbb', true), 'bbbbbbbb');
+  assert.equal(afterAnnounce('bbbbbbbb', 'bbbbbbbb', false), null);
+  assert.equal(afterAnnounce('bbbbbbbb', 'cccccccc', false), 'bbbbbbbb');
+  assert.equal(afterAnnounce('bbbbbbbb', 'aaaaaaaa', true), 'aaaaaaaa');
+  assert.equal(afterAnnounce('aaaaaaaa', 'bbbbbbbb', true), 'aaaaaaaa');
+  // every page reaches the same answer whichever announcement arrives first
+  for (const [x, y] of [['Qx3', 'Ab9'], ['zz', 'zy']]) assert.equal(afterAnnounce(afterAnnounce(null, x, true), y, true), afterAnnounce(afterAnnounce(null, y, true), x, true));
+  assert.equal(afterPeople('aaaaaaaa', ['bbbbbbbb']), null);
+  assert.equal(afterPeople('aaaaaaaa', ['aaaaaaaa', 'bbbbbbbb']), 'aaaaaaaa');
+  assert.equal(afterPeople(null, []), null);
+});
+
+test('what other pages send is checked: known kinds only, sizes limited, extra fields dropped', () => {
+  assert.deepEqual(readPeerData({ kind: 'rtc', description: { type: 'offer', sdp: 'v=0', extra: 1 } }), { kind: 'rtc', description: { type: 'offer', sdp: 'v=0' } });
+  assert.equal(readPeerData({ kind: 'rtc', description: { type: 'evil', sdp: 'v=0' } }), null);
+  assert.equal(readPeerData({ kind: 'rtc', description: { type: 'offer', sdp: 'x'.repeat(60_001) } }), null);
+  assert.deepEqual(readPeerData({ kind: 'rtc', candidate: { candidate: 'candidate:1 1 udp 1 1.2.3.4 5 typ host', sdpMid: '0', sdpMLineIndex: 0, usernameFragment: 'ab', x: 2 } }),
+    { kind: 'rtc', candidate: { candidate: 'candidate:1 1 udp 1 1.2.3.4 5 typ host', sdpMid: '0', sdpMLineIndex: 0, usernameFragment: 'ab' } });
+  assert.equal(readPeerData({ kind: 'rtc', candidate: { candidate: 7 } }), null);
+  assert.deepEqual(readPeerData({ kind: 'presenting', on: true }), { kind: 'presenting', on: true });
+  assert.equal(readPeerData({ kind: 'presenting', on: 'yes' }), null);
+  assert.deepEqual(readPeerData({ kind: 'ask-screen', id: 'abc123' }), { kind: 'ask-screen', id: 'abc123' });
+  assert.equal(readPeerData({ kind: 'ask-screen', id: '<script>' }), null);
+  assert.deepEqual(readPeerData({ kind: 'ask-answer', id: 'abc', answer: 'no' }), { kind: 'ask-answer', id: 'abc', answer: 'no' });
+  assert.equal(readPeerData({ kind: 'ask-answer', id: 'abc', answer: 'whatever' }), null);
+  // nothing can ask a page to share its screen: there's no such message
+  assert.equal(readPeerData({ kind: 'share-now' }), null);
+  for (const x of [null, 1, 'x', [], { kind: 'unknown' }]) assert.equal(readPeerData(x), null);
+});

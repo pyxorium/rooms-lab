@@ -1,0 +1,15 @@
+{
+  "name": "rooms-lab",
+  "version": "0.2.0",
+  "description": "The Rooms lab: small live rooms for tile demos among friends (a proof of concept for thunderbird.cafe)",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node dev/serve.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}
