@@ -75,3 +75,17 @@
 .rl-house-line { color: var(--rl-muted); font-size: 13px; margin: 8px 0 0; }
 .rl-house-line[data-house="off"], .rl-house-line[data-house="failed"] { color: var(--rl-warn); }
 .rl-house { display: none; }
+/* Step 4: tiles opened for everyone. */
+.rl-tiles { margin-top: 18px; }
+.rl-tile-form { display: flex; flex-wrap: wrap; gap: 8px; }
+.rl-tile-input { flex: 1 1 280px; min-width: 0; }
+.rl-strip { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 12px; }
+.rl-tile { background: var(--rl-panel); border: 1px solid var(--rl-line); border-radius: 10px; padding: 8px 10px 10px; }
+.rl-tile-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.rl-tile-name { font-weight: 600; overflow-wrap: anywhere; }
+.rl-tile-by { color: var(--rl-muted); font-size: 13px; }
+.rl-tile-actions { margin-left: auto; display: inline-flex; gap: 6px; }
+.rl-tile-status { color: var(--rl-muted); margin: 4px 0; }
+.rl-tile[data-state="hidden"] .rl-tile-status, .rl-tile[data-state="changed"] .rl-tile-status,
+.rl-tile[data-state="failed"] .rl-tile-status, .rl-tile[data-state="no-loader"] .rl-tile-status { color: var(--rl-warn); }
+.rl-tile-frame { display: block; width: 100%; border: 0; border-radius: 8px; background: #fff; }

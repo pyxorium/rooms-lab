@@ -15,12 +15,20 @@ framework, which Raku can import as they are.
    screen", "Share my screen") goes to the host's page, which asks the house tile; the house answers allow,
    deny or "ask the host"; then the person sharing still decides, in their own prompt and the browser's
    picker. Not published yet (step 5).
-4. Open a tile for everyone (next).
+4. **Open a tile for everyone** (`src/tile-strip.js`, `src/tile-records.js`, `src/hide-check.js`): done.
+   Anyone pastes a tile's address; the host opens it, or the house sends a guest's request to the host
+   ("Ask to open for everyone"). The host's page reads the tile's record once and sends its address and
+   exact version (record CID) to everyone. Each person's page then checks it for itself (Raku's hide list
+   and Bluesky's moderation, then that it's still the same version) and opens its own copy, every file
+   checked against the record. Each person plays with their own copy; nothing in it is sent. At most 6
+   tiles; the host's "Close for everyone", anyone's "Hide for me". Opening a tile while you present gives
+   it the stage (your share stops).
 5. Live: the house tile published, the relay deployed, the page on thunderbird.cafe.
 
 ## Try it on this computer
 
-In `C:\thunderbird-cafe\rooms-lab` (after `npm install` once in `relay\`):
+In `C:\thunderbird-cafe\rooms-lab` (after `npm install` once here, for the tile loader, and once in
+`relay\`):
 
 ```
 npm run dev
@@ -33,6 +41,12 @@ and open its invite link in the other. This runs the real relay code on this com
 then approves each request). Three windows show the house best: a guest asking to see another guest's
 screen goes to the host for approval.
 
+To open a tile for everyone, paste its address (`at://…/ing.dasl.masl/…`, as Raku shows it) under "Tiles
+opened for everyone". Tiles open through the real tile loader (`@dasl/tile-loader`, bundled by
+`serve.mjs`), so they load from `load.tiles.lexicographer.space` as on the site. Without `npm install`
+here the page still runs, and says it can't open tiles. (The browser check opens tiles through a stand-in for the
+loader, since it can't install it; the real loader is checked the site's way in step 5.)
+
 On one computer both windows hear the same microphone, so expect echo: mute one, or use headphones.
 
 ## What's in it
@@ -41,7 +55,12 @@ On one computer both windows hear the same microphone, so expect echo: mute one,
   (the presenter's screen), Unmute and Share my screen, who's here (host, presenting, talking, each direct
   connection), "Ask to see screen", the host's approval cards (Allow / Deny), the sharer's prompt
   ("Choose what to share…" / Not now), the host's Remove and End room, and the room's messages (wishes,
-  the house's decisions, answers).
+  the house's decisions, answers), and the strip of tiles opened for everyone.
+- `src/tile-strip.js`: the strip: each tile checked (hidden? same version?), then opened, newest first.
+- `src/tile-records.js`: a tile's record from its author's server (did:plc or did:web), and a file loader
+  pinned to that record (every file checked by its content address; at most 50 MB a tile).
+- `src/hide-check.js`: would Raku refuse it? The coded hide list from lexicographer.space and Bluesky's
+  moderation, the same checks as Raku's (it never says which, or why).
 - `src/house-bridge.js`: the host's page holding the house tile: fixed rules for what passes between them,
   and the fallback ("the host approves each request") when there's no house or it doesn't answer.
 - `tiles/house/`: the house tile (`rules.js` holds the room's rules: "the host approves"). It runs only on
@@ -55,10 +74,11 @@ On one computer both windows hear the same microphone, so expect echo: mute one,
 - `src/messages.js`: what the pages say to each other, checked on arrival.
 - `src/formats.js`, `src/config.js`: room codes, links, the relay address, STUN servers, timings.
 - `src/room.css`: the look (Raku's palette), scoped to `.rl`.
-- `dev/`: the dev page and `serve.mjs` (`npm run dev`).
+- `dev/`: the dev page, `serve.mjs` (`npm run dev`), and `tile-host.js` (the tile loader, for the dev page).
 - `test/`: `npm test` (the page's pieces, its relay connection against the real relay, the house's
-  rules, the bridge, publishing to a stand-in server). The browser
-  check, `test/browser/check_room.mjs`, runs three Chromium pages with a fake mic and screen; it needs
+  rules, the bridge, publishing to a stand-in server, reading tile records, the hide list). The browser
+  check, `test/browser/check_room.mjs`, runs three Chromium pages with a fake mic and screen (and stand-ins
+  for the tiles' servers, with the real servers' CORS headers); it needs
   Playwright, which this folder doesn't install (it runs in the chat sandbox).
 
 ## Consent and privacy
@@ -70,6 +90,9 @@ On one computer both windows hear the same microphone, so expect echo: mute one,
   and the page keeps the powers no house can override: the prompts, the picker, the call, ending the
   room, removing someone, stopping your own share. A page takes "someone asks to see your screen" and
   "you may present" only from the host's page.
+- A tile opened for everyone runs on each person's own computer, in the tile loader's sealed frame, from
+  its author's account. Each page checks it itself first, so nobody's page shows a tile Raku would hide,
+  even if another page sends it. What anyone does in their copy stays on their computer.
 - Microphones start off. The browser asks the first time you unmute.
 - Nothing is recorded or stored. Names are typed and not checked.
 - Voice and screens go directly between the computers, encrypted by the browsers. Each computer asks a

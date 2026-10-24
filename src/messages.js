@@ -12,12 +12,22 @@
 //   { kind: "go-ahead", id }                       from the host to someone who asked to present
 //   { kind: "ask-answer", id, answer }             the person asked, to the asker: "yes" | "no" | "busy" | "already"
 // None of these makes a page share: sharing always starts from the person's own click, then the picker.
+// Tiles opened for everyone (build step 4), from the host's page only:
+//   { kind: "wish", id, wish: "open-tile", uri }   to the host: "open this tile for everyone"
+//   { kind: "tile", uri, cid, by }                 to everyone: open this tile, this exact version (record CID)
+//   { kind: "tiles", list: [{ uri, cid, by }] }    to someone who just came in: the tiles open now
+//   { kind: "tile-close", uri }                    to everyone: the host closed it
+
+import { TILE_URI, isRecordCid } from './tile-records.js';
 
 const isId = (x) => typeof x === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(x);
 const isPeer = (x) => typeof x === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(x);
 const str = (x, max) => typeof x === 'string' && x.length <= max;
 export const ANSWERS = ['yes', 'no', 'busy', 'already'];
-export const PAGE_WISHES = ['see-screen', 'present'];         // open-tile comes with the strip (step 4)
+export const PAGE_WISHES = ['see-screen', 'present', 'open-tile'];
+export const MAX_TILES = 6;
+const isTileUri = (x) => typeof x === 'string' && x.length <= 2600 && TILE_URI.test(x);
+const readTile = (t) => (t && typeof t === 'object' && isTileUri(t.uri) && isRecordCid(t.cid) && isPeer(t.by) ? { uri: t.uri, cid: t.cid, by: t.by } : null);
 
 /** The message, cleaned, or null if it isn't one of ours. */
 export function readPeerData(d) {
@@ -45,6 +55,7 @@ export function readPeerData(d) {
     case 'wish':
       if (!isId(d.id) || !PAGE_WISHES.includes(d.wish)) return null;
       if (d.wish === 'see-screen') return isPeer(d.target) ? { kind: 'wish', id: d.id, wish: d.wish, target: d.target } : null;
+      if (d.wish === 'open-tile') return isTileUri(d.uri) ? { kind: 'wish', id: d.id, wish: d.wish, uri: d.uri } : null;
       return { kind: 'wish', id: d.id, wish: d.wish };
     case 'wish-result':
       if (!isId(d.id) || !['allow', 'deny'].includes(d.decision)) return null;
@@ -52,6 +63,13 @@ export function readPeerData(d) {
     case 'ask-screen': return isId(d.id) && isPeer(d.asker) ? { kind: 'ask-screen', id: d.id, asker: d.asker } : null;
     case 'go-ahead': return isId(d.id) ? { kind: 'go-ahead', id: d.id } : null;
     case 'ask-answer': return isId(d.id) && ANSWERS.includes(d.answer) ? { kind: 'ask-answer', id: d.id, answer: d.answer } : null;
+    case 'tile': { const t = readTile(d); return t ? { kind: 'tile', ...t } : null; }
+    case 'tiles': {
+      if (!Array.isArray(d.list) || d.list.length > MAX_TILES) return null;
+      const list = d.list.map(readTile);
+      return list.every(Boolean) ? { kind: 'tiles', list } : null;
+    }
+    case 'tile-close': return isTileUri(d.uri) ? { kind: 'tile-close', uri: d.uri } : null;
     default: return null;
   }
 }

@@ -23,8 +23,14 @@
       f.src = '/tiles/house/index.html';
       return f;
     };
+    // The tile loader, for tiles opened for everyone (bundled by serve.mjs after npm install; the checks
+    // put in a stand-in before the page starts).
+    let tileHost = window.__roomsLabTileHost || null;
+    if (!tileHost) {
+      try { tileHost = (await import('/dev/tile-host.bundle.js')).makeTileHost?.() || null; } catch { tileHost = null; }
+    }
     // For the checks and the console: window.__roomsLab.room is what the page knows right now.
-    window.__roomsLab = mountRoomPage(document.getElementById('room'), { loadHouse });
+    window.__roomsLab = mountRoomPage(document.getElementById('room'), { loadHouse, tileHost });
   </script>
 </body>
 </html>

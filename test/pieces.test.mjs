@@ -79,7 +79,18 @@ test('what other pages send is checked: known kinds only, sizes limited, extra f
   assert.deepEqual(readPeerData({ kind: 'wish', id: 'abc', wish: 'see-screen', target: 'ted-peer-11', x: 1 }), { kind: 'wish', id: 'abc', wish: 'see-screen', target: 'ted-peer-11' });
   assert.deepEqual(readPeerData({ kind: 'wish', id: 'abc', wish: 'present', target: 'ignored-peer' }), { kind: 'wish', id: 'abc', wish: 'present' });
   assert.equal(readPeerData({ kind: 'wish', id: 'abc', wish: 'see-screen' }), null, 'see-screen names whose');
-  assert.equal(readPeerData({ kind: 'wish', id: 'abc', wish: 'open-tile', uri: 'at://x' }), null, 'open-tile comes in step 4');
+  const TILE = 'at://did:plc:6vxjigxrqizmbo56gojxico3/ing.dasl.masl/3myfnyphiuw2t';
+  const CID = 'bafyreidwwralslcgks5hwet7adtcthwti74k7vo47bcuipbwcqmspqk5zu';
+  assert.equal(readPeerData({ kind: 'wish', id: 'abc', wish: 'open-tile', uri: 'at://x' }), null, 'only a tile address');
+  assert.deepEqual(readPeerData({ kind: 'wish', id: 'abc', wish: 'open-tile', uri: TILE }), { kind: 'wish', id: 'abc', wish: 'open-tile', uri: TILE });
+  // tiles opened for everyone (step 4)
+  assert.deepEqual(readPeerData({ kind: 'tile', uri: TILE, cid: CID, by: 'robin-peer-1', name: '<b>x</b>' }), { kind: 'tile', uri: TILE, cid: CID, by: 'robin-peer-1' }, 'no name: each page reads the record itself');
+  assert.equal(readPeerData({ kind: 'tile', uri: TILE, cid: 'Qm123', by: 'robin-peer-1' }), null);
+  assert.equal(readPeerData({ kind: 'tile', uri: 'https://example.com', cid: CID, by: 'robin-peer-1' }), null);
+  assert.deepEqual(readPeerData({ kind: 'tiles', list: [{ uri: TILE, cid: CID, by: 'robin-peer-1' }] }).list.length, 1);
+  assert.equal(readPeerData({ kind: 'tiles', list: Array(7).fill({ uri: TILE, cid: CID, by: 'robin-peer-1' }) }), null, 'six at most');
+  assert.equal(readPeerData({ kind: 'tiles', list: [{ uri: TILE, cid: CID, by: 'robin-peer-1' }, { uri: 'x' }] }), null);
+  assert.deepEqual(readPeerData({ kind: 'tile-close', uri: TILE }), { kind: 'tile-close', uri: TILE });
   assert.deepEqual(readPeerData({ kind: 'wish-result', id: 'abc', decision: 'deny', reason: 'The host said no.' }), { kind: 'wish-result', id: 'abc', decision: 'deny', reason: 'The host said no.' });
   assert.equal(readPeerData({ kind: 'wish-result', id: 'abc', decision: 'ask-host' }), null, 'askers only hear allow or deny');
   assert.equal(readPeerData({ kind: 'wish-result', id: 'abc', decision: 'deny', reason: 'x'.repeat(201) }).reason, '');

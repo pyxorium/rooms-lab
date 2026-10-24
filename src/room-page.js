@@ -21,7 +21,10 @@
 // comes next, and its "Stop sharing" bar stays up while sharing. No page and no house tile can start
 // someone's share. Nothing is recorded.
 //
-// Step 4 adds the strip of tiles opened for everyone.
+// Open for everyone (step 4): anyone pastes a tile's address; the wish goes to the host's page, which reads
+// the tile's record (its CID: this exact version), checks Raku's hide list, and asks the house (the host may
+// open tiles; anyone else, the host approves). Then the host's page sends the address and CID to everyone,
+// and each page checks the tile again for itself and opens its own copy in the strip (tile-strip.js).
 import { connectRoom } from './room-link.js';
 import { createMesh } from './mesh.js';
 import { createLevels } from './levels.js';
@@ -29,6 +32,9 @@ import { readPeerData } from './messages.js';
 import { afterAnnounce, afterPeople } from './presenting.js';
 import { cleanName, newRoomCode, readRoomHash, inviteLink, hostLink } from './formats.js';
 import { createHouseBridge } from './house-bridge.js';
+import { createTileRecords, parseTileUri } from './tile-records.js';
+import { createHideCheck } from './hide-check.js';
+import { createTileStrip, MAX_TILES } from './tile-strip.js';
 import { relayUrl, ICE_SERVERS, TIMES } from './config.js';
 
 export const h = (tag, attrs = {}, ...kids) => {
@@ -45,6 +51,7 @@ export const h = (tag, attrs = {}, ...kids) => {
 
 const NAME_KEY = 'rooms-lab-name';                 // localStorage: your typed name, for next time
 const hostKeyKey = (room) => `rooms-lab-host:${room}`;   // sessionStorage: this tab's host key for a room
+const tilesKey = (room) => `rooms-lab-tiles:${room}`;    // sessionStorage: the host's tiles open for everyone (a reload keeps them)
 
 export const HONEST = [
   'This is a lab: a try-out, not a finished app.',
@@ -53,6 +60,7 @@ export const HONEST = [
   'The relay only introduces the people in a room and passes their messages; it stores nothing.',
   "Voice and screens go directly between the computers, encrypted by the browsers. To find each other, each computer asks a public STUN server (Google's or Cloudflare's) for its own address.",
   "Sharing only works on networks that allow direct connections (there's no TURN server yet).",
+  "A tile opened for everyone runs on each person's own computer, from its author's account; each page first checks it (Raku's hide list, and that it's the same version for everyone).",
 ];
 
 const DEFAULTS = {
@@ -71,6 +79,11 @@ const DEFAULTS = {
   // approves each request.
   loadHouse: null,
   houseTimes: undefined,
+  // The tile loader for tiles opened for everyone: { render({ uri, manifest, loader, height, name }) → frame }.
+  // null: this page can't open tiles (the strip says so). records / hideCheck: swappable for the checks.
+  tileHost: null,
+  records: null,
+  hideCheck: null,
   // Is the person's click still "fresh"? Browsers only open the screen picker straight from a click.
   activation: () => !!globalThis.navigator?.userActivation?.isActive,
 };
@@ -81,6 +94,8 @@ const put = (s, k, v) => { try { if (v == null) s?.removeItem(k); else s?.setIte
 export function mountRoomPage(root, options = {}) {
   const o = { ...DEFAULTS, ...options };
   const url = o.relayUrl || relayUrl(o.loc);
+  const records = o.records || createTileRecords();
+  const hideCheck = o.hideCheck || createHideCheck({ storage: o.storage });
   let room = null;                   // everything about the room once joined (null in the lobby)
 
   const view = h('div', { class: 'rl-view' });
@@ -141,6 +156,7 @@ export function mountRoomPage(root, options = {}) {
       house: null,                 // the host's page only: the house bridge
       approvals: new Map(),        // the host's page only: `${from} ${id}` → { from, w, reason, timer }
       hostWishes: new Map(),       // the host's page only: asker → their wish being decided (one at a time)
+      roomTiles: [],               // the host's page only: the tiles open for everyone, [{ uri, cid, by }]
       talking: new Set(),
       log: [],
       over: false,
@@ -150,6 +166,10 @@ export function mountRoomPage(root, options = {}) {
 
     r.levels = createLevels({ AudioContextImpl: o.AudioContextImpl, onChange: (s) => { r.talking = s; renderPeople(); } });
     r.levels.start();                // we're inside the Join / New room click
+    r.strip = createTileStrip({
+      mount: els.strip, records, hide: hideCheck, tileHost: o.tileHost, h, nameOf: (p) => nameOf(p),
+      isHost: () => r.host, onCloseForEveryone: (uri) => closeForEveryone(uri), onNote: (t) => note('\u25a6', null, t),
+    });
     r.mesh = createMesh({
       iceServers: o.iceServers, RTCPeerConnectionImpl: o.RTCPeerConnectionImpl,
       signal: (peer, data) => r.link.to(peer, data),
@@ -188,6 +208,10 @@ export function mountRoomPage(root, options = {}) {
     els.houseLine = h('p', { class: 'rl-house-line', hidden: true });
     els.houseMount = h('div', { class: 'rl-house', hidden: true });
     els.approvals = h('div', { class: 'rl-approvals' });
+    els.tileInput = h('input', { class: 'rl-tile-input', type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: 'at://\u2026/ing.dasl.masl/\u2026', 'aria-label': 'A tile\u2019s address' });
+    els.tileButton = h('button', { type: 'submit', class: 'rl-tile-open' }, 'Open for everyone');
+    els.tileForm = h('form', { class: 'rl-tile-form', onsubmit: (ev) => { ev.preventDefault(); askOpenTile(); } }, els.tileInput, els.tileButton);
+    els.strip = h('ul', { class: 'rl-strip' });
     els.prompt = h('div', { class: 'rl-prompt', role: 'alertdialog', 'aria-live': 'assertive', hidden: true });
     els.people = h('ul', { class: 'rl-people' });
     els.log = h('ol', { class: 'rl-log' });
@@ -200,6 +224,11 @@ export function mountRoomPage(root, options = {}) {
       els.stage,
       h('div', { class: 'rl-controls' }, els.mic, els.share),
       els.prompt,
+      h('section', { class: 'rl-tiles' },
+        h('h2', {}, 'Tiles opened for everyone'),
+        els.tileForm,
+        h('p', { class: 'rl-help' }, 'Paste a tile\u2019s address. Everyone gets their own copy to play with; each page checks it first.'),
+        els.strip),
       h('h2', {}, 'Here'),
       els.people,
       h('details', { class: 'rl-messages' }, h('summary', {}, 'Room messages'), els.log),
@@ -234,6 +263,8 @@ export function mountRoomPage(root, options = {}) {
       if (d.host && d.hostKey) put(o.session, hostKeyKey(r.code), d.hostKey);
       if (r.screenTrack) r.link.all({ kind: 'presenting', on: true });      // back after a drop: still presenting
       if (d.host) startHouse(); else stopHouse();
+      if (d.host) hostTilesBack();
+      r.strip.refresh();
       say(d.host ? "You're the host. Send the invite link to the people you want here." : "You're in the room.");
     } else if (state === 'down') say('Reconnecting to the room… (voice and screens carry on meanwhile)');
     else if (state === 'connecting') say('Connecting to the room…');
@@ -274,8 +305,10 @@ export function mountRoomPage(root, options = {}) {
     const before = r.presenter;
     r.presenter = afterPeople(r.presenter, here);
     if (before && !r.presenter) note('←', null, `${before === r.me ? 'you' : 'the presenter'} left the stage`);
-    // Someone new: tell them who's presenting (they missed it).
-    if (r.screenTrack && list.some((p) => !was.has(p.peer) && p.peer !== r.me)) r.link.all({ kind: 'presenting', on: true });
+    // Someone new: tell them who's presenting, and (the host) which tiles are open (they missed it).
+    const newcomers = list.filter((p) => !was.has(p.peer) && p.peer !== r.me && !p.away);
+    if (r.screenTrack && newcomers.length) r.link.all({ kind: 'presenting', on: true });
+    if (r.host && r.roomTiles.length) for (const p of newcomers) r.link.to(p.peer, { kind: 'tiles', list: r.roomTiles });
     // Wishes, prompts and approvals about people who've gone.
     for (const [id, w] of r.wishes) if (w.target && !here.includes(w.target)) dropWish(id, `${nameOf(w.target)} left.`);
     if (r.prompt?.type === 'ask' && !here.includes(r.prompt.from)) closePrompt();
@@ -301,11 +334,14 @@ export function mountRoomPage(root, options = {}) {
     } else if (m.kind === 'wish') {
       if (!r.host) return;
       handleWish(from, m);
-    } else if (m.kind === 'wish-result' || m.kind === 'go-ahead' || m.kind === 'ask-screen') {
+    } else if (['wish-result', 'go-ahead', 'ask-screen', 'tile', 'tiles', 'tile-close'].includes(m.kind)) {
       if (from !== hostPeer()?.peer) { note('!', from, `${m.kind} not from the host: ignored`); return; }
       if (m.kind === 'wish-result') wishResult(m.id, m.decision, m.reason);
       else if (m.kind === 'go-ahead') goAhead(m.id);
-      else askedForScreen(m.asker, m.id);
+      else if (m.kind === 'ask-screen') askedForScreen(m.asker, m.id);
+      else if (m.kind === 'tile') tileOpened(m);
+      else if (m.kind === 'tiles') m.list.forEach((t) => r.strip.show(t));
+      else r.strip.remove(m.uri);
     } else if (m.kind === 'ask-answer') {
       const w = r.wishes.get(m.id);
       if (!w || w.wish !== 'see-screen' || w.target !== from) return;
@@ -320,6 +356,9 @@ export function mountRoomPage(root, options = {}) {
     wish: () => `wish ${m.wish}${m.target ? ` (${whose(m.target)} screen)` : ''}`,
     'wish-result': () => `wish-result ${m.decision}${m.reason ? `: ${m.reason}` : ''}`,
     'ask-screen': () => `ask-screen for ${nameOf(m.asker)}`,
+    tile: () => `tile ${m.uri.split('/').pop()} (opened by ${nameOf(m.by)})`,
+    tiles: () => `tiles (${m.list.length})`,
+    'tile-close': () => `tile-close ${m.uri.split('/').pop()}`,
   }[m.kind] || (() => m.kind))();
 
   const whose = (peer) => (peer === room?.me ? 'your' : `${nameOf(peer)}\u2019s`);
@@ -327,20 +366,23 @@ export function mountRoomPage(root, options = {}) {
   const hostHere = () => { const hp = hostPeer(); return !!hp && !hp.away; };
 
   // ---- Wishes: asking (anyone) ----
-  function wish(kind, target = null) {
+  function wish(kind, target = null, uri = null) {
     const r = room;
-    if (!r || !r.link.joined || r.wishes.size || r.screenTrack) return;
-    if (r.presenter && r.presenter !== r.me) { say(`${nameOf(r.presenter)} is presenting. One screen at a time.`); return; }
+    if (!r || !r.link.joined || r.wishes.size) return;
+    const screens = kind !== 'open-tile';
+    if (screens && r.screenTrack) return;
+    if (screens && r.presenter && r.presenter !== r.me) { say(`${nameOf(r.presenter)} is presenting. One screen at a time.`); return; }
     const hp = hostPeer();
     if (!hp || hp.away) { say('Waiting for the host to come back.'); return; }
     const id = newRoomCode();
-    r.wishes.set(id, { wish: kind, target, stage: 'host', timer: setTimeout(() => dropWish(id, 'No answer.'), o.times.askTimeoutMs * 2) });
-    const w = { kind: 'wish', id, wish: kind, ...(target ? { target } : {}) };
-    if (r.host) handleWish(r.me, w);
+    r.wishes.set(id, { wish: kind, target, uri, stage: 'host', timer: setTimeout(() => dropWish(id, 'No answer.'), o.times.askTimeoutMs * 2) });
+    const w = { kind: 'wish', id, wish: kind, ...(target ? { target } : {}), ...(uri ? { uri } : {}) };
+    if (r.host) { if (kind === 'open-tile') say('Opening the tile for everyone\u2026'); handleWish(r.me, w); }
     else {
       r.link.to(hp.peer, w);
       note('→', hp.peer, describe(w));
-      say(kind === 'see-screen' ? `Asked the host if you can see ${nameOf(target)}\u2019s screen\u2026` : 'Asked the host if you can present\u2026');
+      say(kind === 'see-screen' ? `Asked the host if you can see ${nameOf(target)}\u2019s screen\u2026`
+        : kind === 'open-tile' ? 'Asked the host to open the tile for everyone\u2026' : 'Asked the host if you can present\u2026');
     }
     renderPeople();
   }
@@ -360,6 +402,7 @@ export function mountRoomPage(root, options = {}) {
     const w = r.wishes.get(id);
     if (!w) return;
     if (decision === 'deny') return dropWish(id, reason || 'The host said no.');
+    if (w.wish === 'open-tile') return dropWish(id, r.host ? 'Opened for everyone.' : 'The host opened the tile for everyone.');
     if (w.wish === 'see-screen') {
       w.stage = 'person';
       say(r.host ? `Asked ${nameOf(w.target)}\u2026` : `The host allowed it. Waiting for ${nameOf(w.target)}\u2026`);
@@ -410,15 +453,29 @@ export function mountRoomPage(root, options = {}) {
     renderHouse();
   }
 
-  async function handleWish(from, w) {
+  async function handleWish(from, wIn) {
+    let w = wIn;
     const r = room;
     const asker = r.people.get(from);
     if (!r.host || !asker || asker.away) return;
     if (r.hostWishes.has(from)) return result(from, w.id, 'deny', 'One request at a time.');
     r.hostWishes.set(from, w.id);
-    const d = await r.house.decide(houseState(), { by: from, wish: w.wish, ...(w.target ? { target: w.target } : {}) });
+    if (w.wish === 'open-tile') {
+      const no = (why) => { r.hostWishes.delete(from); result(from, w.id, 'deny', why); };
+      const full = tilesFull(w.uri);
+      if (full) return no(full);
+      const rec = await records.read(w.uri);
+      if (room !== r || r.over) return;
+      if (!rec.ok) return no(rec.why);
+      let hidden = false;
+      try { hidden = await hideCheck.isHidden(rec.did, rec.rkey); } catch { hidden = false; }
+      if (room !== r || r.over) return;
+      if (hidden) return no('That tile isn\u2019t shown here.');
+      w = { ...w, uri: rec.uri, rec };
+    }
+    const d = await r.house.decide(houseState(), { by: from, wish: w.wish, ...(w.target ? { target: w.target } : {}), ...(w.uri ? { uri: w.uri } : {}) });
     if (room !== r || r.over) return;
-    note('\u2302', from, `${w.wish}${w.target ? ` (${whose(w.target)} screen)` : ''}: ${d.decision} \u2014 ${d.reason}${d.by === 'page' ? ' (no house)' : ''}`);
+    note('\u2302', from, `${w.wish}${w.target ? ` (${whose(w.target)} screen)` : ''}${w.rec ? ` ("${w.rec.name}")` : ''}: ${d.decision} \u2014 ${d.reason}${d.by === 'page' ? ' (no house)' : ''}`);
     if (d.decision === 'deny') { r.hostWishes.delete(from); return result(from, w.id, 'deny', d.reason); }
     if (d.decision === 'allow' || from === r.me) return carry(from, w);
     openApproval(from, w, d);
@@ -429,10 +486,14 @@ export function mountRoomPage(root, options = {}) {
     const key = `${from} ${w.id}`;
     const text = w.wish === 'see-screen'
       ? (w.target === r.me ? `${nameOf(from)} asks to see your screen.` : `${nameOf(from)} asks to see ${nameOf(w.target)}\u2019s screen.`)
+      : w.wish === 'open-tile' ? `${nameOf(from)} asks to open \u201c${w.rec.name}\u201d for everyone.`
       : `${nameOf(from)} asks to present their screen.`;
+    const after = w.wish === 'see-screen' ? `${w.target === r.me ? 'you' : nameOf(w.target)} still choose${w.target === r.me ? '' : 's'} whether to share`
+      : w.wish === 'open-tile' ? 'each person\u2019s page checks the tile and opens its own copy'
+      : `${nameOf(from)} still chooses what to share`;
     const el = h('div', { class: 'rl-approval', role: 'alertdialog', 'data-from': from },
       h('p', { class: 'rl-prompt-q' }, text),
-      h('p', { class: 'rl-help' }, `${d.by === 'house' ? 'House' : 'No house'}: ${d.reason} If you allow it, ${w.wish === 'see-screen' ? `${w.target === r.me ? 'you' : nameOf(w.target)} still choose${w.target === r.me ? '' : 's'} whether to share` : `${nameOf(from)} still chooses what to share`}.`),
+      h('p', { class: 'rl-help' }, `${d.by === 'house' ? 'House' : 'No house'}: ${d.reason} If you allow it, ${after}.`),
       h('div', { class: 'rl-actions' },
         h('button', { type: 'button', class: 'rl-primary', onclick: () => { closeApproval(key); carry(from, w); } }, 'Allow'),
         h('button', { type: 'button', onclick: () => { closeApproval(key); r.hostWishes.delete(from); result(from, w.id, 'deny', 'The host said no.'); } }, 'Deny')));
@@ -459,6 +520,12 @@ export function mountRoomPage(root, options = {}) {
     r.hostWishes.delete(from);
     const here = (p) => r.people.has(p) && !r.people.get(p).away;
     if (!here(from)) return;
+    if (w.wish === 'open-tile') {
+      const full = tilesFull(w.uri);
+      if (full) return result(from, w.id, 'deny', full);
+      result(from, w.id, 'allow', '');
+      return openForEveryone({ uri: w.uri, cid: w.rec.cid, by: from });
+    }
     if (w.wish === 'see-screen' && !here(w.target)) return result(from, w.id, 'deny', 'They\u2019re not in the room any more.');
     if (r.presenter) return result(from, w.id, 'deny', 'Someone is presenting. One screen at a time.');
     result(from, w.id, 'allow', '');
@@ -474,6 +541,60 @@ export function mountRoomPage(root, options = {}) {
     if (to === r.me) return wishResult(id, decision, reason);
     r.link.to(to, { kind: 'wish-result', id, decision, reason });
     note('\u2192', to, `wish-result ${decision}${reason ? `: ${reason}` : ''}`);
+  }
+
+  // ---- Tiles opened for everyone ----
+  function askOpenTile() {
+    const r = room;
+    const v = r.els.tileInput.value.trim();
+    if (!parseTileUri(v)) { say('Paste a tile\u2019s address: at://\u2026/ing.dasl.masl/\u2026'); return; }
+    r.els.tileInput.value = '';
+    wish('open-tile', null, v);
+  }
+
+  function tilesFull(uri) {
+    const r = room;
+    if (r.roomTiles.some((t) => t.uri === uri)) return 'That tile is already open for everyone.';
+    if (r.roomTiles.length >= MAX_TILES) return `The strip is full (${MAX_TILES} tiles). Close one first.`;
+    return null;
+  }
+
+  // The host's page: open it on every page (each checks it for itself).
+  function openForEveryone(t) {
+    const r = room;
+    r.roomTiles.push(t);
+    put(o.session, tilesKey(r.code), JSON.stringify(r.roomTiles));
+    r.link.all({ kind: 'tile', ...t });
+    note('\u2192', null, `tile ${t.uri.split('/').pop()} (opened by ${nameOf(t.by)})`);
+    tileOpened(t);
+  }
+
+  function closeForEveryone(uri) {
+    const r = room;
+    if (!r?.host) return;
+    r.roomTiles = r.roomTiles.filter((t) => t.uri !== uri);
+    put(o.session, tilesKey(r.code), JSON.stringify(r.roomTiles));
+    r.link.all({ kind: 'tile-close', uri });
+    note('\u2192', null, `tile-close ${uri.split('/').pop()}`);
+    r.strip.remove(uri);
+  }
+
+  // A tile opened for everyone: into the strip; if whoever opened it was presenting, the tile takes the stage.
+  function tileOpened(t) {
+    const r = room;
+    r.strip.show(t);
+    if (t.by === r.me && r.screenTrack) stopShare('Your share stopped: the tile takes over the stage.');
+  }
+
+  // The host back after a reload (or a relay restart): the tiles they had open, for everyone again.
+  function hostTilesBack() {
+    const r = room;
+    if (!r.roomTiles.length) {
+      try { const kept = JSON.parse(get(o.session, tilesKey(r.code)) || '[]'); if (Array.isArray(kept)) r.roomTiles = kept.filter((t) => t && parseTileUri(t.uri) && t.cid).slice(0, MAX_TILES); } catch { /* none */ }
+    }
+    if (!r.roomTiles.length) return;
+    r.roomTiles.forEach((t) => r.strip.show(t));
+    r.link.all({ kind: 'tiles', list: r.roomTiles });
   }
 
   // ---- Someone asks to see my screen (the host allowed it, or it's the host asking) ----
@@ -649,6 +770,8 @@ export function mountRoomPage(root, options = {}) {
     share.textContent = r.screenTrack ? 'Stop sharing' : other ? `${nameOf(r.presenter)} is presenting` : asking ? 'Asked the host\u2026' : 'Share my screen';
     share.disabled = !r.screenTrack && r.prompt?.type !== 'go' && (!!other || !r.link?.joined || r.wishes.size > 0 || !hostHere());
     hostTools.hidden = !r.host;
+    r.els.tileButton.textContent = r.host ? 'Open for everyone' : 'Ask to open for everyone';
+    r.els.tileButton.disabled = !r.link?.joined || r.wishes.size > 0 || !hostHere();
     leaveBtn.hidden = r.host;
   }
 
@@ -707,6 +830,7 @@ export function mountRoomPage(root, options = {}) {
     for (const w of r.wishes.values()) clearTimeout(w.timer);
     for (const a of r.approvals.values()) clearTimeout(a.timer);
     if (r.house) { r.house.stop(); r.house = null; }
+    r.strip.clear();
     if (r.micStream) r.micStream.getTracks().forEach((t) => t.stop());
     r.mesh.close();
     r.levels.close();

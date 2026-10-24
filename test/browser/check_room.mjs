@@ -14,6 +14,14 @@
 //   and go-aheads not from the host are ignored). Nothing can be asked while the host is away; the house
 //   comes back with the host. A room with no house: the host approves each request. The house tile on its
 //   own shows its card.
+//   step 4: Nick, presenting, opens a tile for everyone: his share gives the stage to the tile, and every
+//   page opens its own copy (clicks in one copy don't reach the others). A tile on Raku's hide list is
+//   refused by the host's page, and by each page for itself if sent anyway. Robin asks to open a tile; Nick
+//   approves. A tile changed after it was opened, or a file that isn't what the record says, is refused on
+//   every page. Close for everyone; Hide for me. A newcomer gets the open tiles; so does the host after a
+//   reload. A page with no tile loader says so. The tiles' servers (plc.directory, the author's PDS, the hide
+//   list, Bluesky) are stand-ins answering with the real servers' CORS headers; tiles open in a stand-in
+//   for the tile loader (a sealed frame of the tile's page), fed by the page's own pinned file loader.
 // WebRTC between pages in one sandbox connects locally without STUN: this can't show how home networks
 // behave; the owner's two-computer test is the real proof.
 //
@@ -21,6 +29,8 @@
 import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import { startDev } from '../../dev/serve.mjs';
+import { rawCid } from '../../scripts/lib/cid.js';
+import { sha256Hex, tileKey, HIDE_LIST_URL } from '../../src/hide-check.js';
 
 const require = createRequire(import.meta.url);
 let chromium;
@@ -38,8 +48,66 @@ const errors = [];
 // then talks with plain messages.
 const DATA_JS = '/.well-known/web-tiles/data.js';
 
-async function person(name) {
+// ---- Stand-ins for the tiles' servers ----
+const TILE_DID = 'did:plc:tiletiletiletiletiletile';
+const TILE_PDS = 'https://pds.tiles.test';
+const SALT = 'lexicographer.space hide list v1';
+const counterPage = (label) => `<!doctype html><meta charset="utf-8"><body style="font:16px system-ui;margin:12px"><p>${label}</p><button id="b">0</button><script>b.onclick=()=>{b.textContent=String(+b.textContent+1)}</script>`;
+const TILES = {
+  counter1: { name: 'Counter', letter: 'q' }, counter2: { name: 'Counter Two', letter: 'r' }, hidden1: { name: 'Hidden', letter: 's' },
+  changing1: { name: 'Changing', letter: 't', changing: true }, badblob1: { name: 'Broken file', letter: 'u', badBlob: true },
+};
+for (const [rkey, t] of Object.entries(TILES)) {
+  t.bytes = new TextEncoder().encode(counterPage(t.name));
+  t.blobCid = await rawCid(t.bytes);
+  t.cid = `bafyrei${t.letter.repeat(52)}`;
+}
+const uriOf = (rkey) => `at://${TILE_DID}/ing.dasl.masl/${rkey}`;
+const HIDE_LIST = { version: 1, salt: SALT, accounts: [], tiles: [await sha256Hex(tileKey(SALT, TILE_DID, 'hidden1'))] };
+const recordReads = new Map();
+const CORS = { 'access-control-allow-origin': '*' };
+async function standIns(ctx) {
+  const json = (route, body, status = 200) => route.fulfill({ status, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  await ctx.route('https://plc.directory/**', (route) => json(route, { id: TILE_DID, service: [{ id: '#atproto_pds', type: 'AtprotoPersonalDataServer', serviceEndpoint: TILE_PDS }] }));
+  await ctx.route(`${TILE_PDS}/**`, (route) => {
+    const u = new URL(route.request().url());
+    if (u.pathname === '/xrpc/com.atproto.repo.getRecord') {
+      const rkey = u.searchParams.get('rkey'), t = TILES[rkey];
+      if (!t) return json(route, { error: 'RecordNotFound' }, 400);
+      const n = (recordReads.get(rkey) || 0) + 1;
+      recordReads.set(rkey, n);
+      const cid = t.changing && n > 1 ? `bafyrei${'v'.repeat(52)}` : t.cid;    // changed after the host's first read
+      const manifest = { name: t.name, sizing: { width: 400, height: 220 }, resources: { '/': { src: { $type: 'blob', ref: { $link: t.blobCid }, mimeType: 'text/html', size: t.bytes.length }, 'content-type': 'text/html' } } };
+      return json(route, { uri: uriOf(rkey), cid, value: { $type: 'ing.dasl.masl', cid: t.cid, tile: manifest, createdAt: '2026-10-23T12:00:00.000Z' } });
+    }
+    if (u.pathname === '/xrpc/com.atproto.sync.getBlob') {
+      const t = Object.values(TILES).find((x) => x.blobCid === u.searchParams.get('cid'));
+      if (!t) return route.fulfill({ status: 404, headers: CORS, body: '' });
+      const body = t.badBlob ? Buffer.from('<p>not what the record says</p>') : Buffer.from(t.bytes);
+      return route.fulfill({ status: 200, headers: { ...CORS, 'content-type': '*/*' }, body });
+    }
+    return route.fulfill({ status: 404, headers: CORS, body: '' });
+  });
+  await ctx.route(HIDE_LIST_URL, (route) => json(route, HIDE_LIST));
+  await ctx.route('https://public.api.bsky.app/**', (route) => json(route, { did: new URL(route.request().url()).searchParams.get('actor'), handle: 'someone.test', labels: [] }));
+}
+// The stand-in tile loader: the tile's page (from the page's own pinned file loader) in a sealed frame.
+const STANDIN_TILE_HOST = () => {
+  window.__roomsLabTileHost = {
+    async render({ loader }) {
+      const r = await loader.resolvePath('/');
+      const f = document.createElement('iframe');
+      f.setAttribute('sandbox', 'allow-scripts');
+      if (r.ok) f.srcdoc = new TextDecoder().decode(r.body);
+      return f;
+    },
+  };
+};
+
+async function person(name, { tiles = true } = {}) {
   const ctx = await browser.newContext({ permissions: ['microphone'] });
+  await standIns(ctx);
+  if (tiles) await ctx.addInitScript(STANDIN_TILE_HOST);
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
   page.on('console', (m) => {
@@ -91,7 +159,7 @@ try {
   step('the lobby says what the lab is (honest wording)');
   await nick.page.goto(PAGE);
   const honest = await nick.page.locator('.rl-honest').textContent();
-  for (const t of ['not checked', 'Nothing is recorded', 'stores nothing', 'directly between the computers', 'no TURN']) assert.ok(honest.includes(t), t);
+  for (const t of ['not checked', 'Nothing is recorded', 'stores nothing', 'directly between the computers', 'no TURN', "runs on each person's own computer"]) assert.ok(honest.includes(t), t);
 
   step('Nick makes a room: his page holds the house, sealed (scripts only, no origin of its own), and it says it\'s ready');
   await join(nick, PAGE, 'New room');
@@ -239,6 +307,97 @@ try {
   await nick.page.click('.rl-share');
   await stageClear(robin);
 
+  const tileState = (p, rkey) => room(p, (u) => document.querySelector(`.rl-tile[data-uri="${u}"]`)?.dataset.state ?? null, uriOf(rkey));
+  const tileIs = (p, rkey, state) => until(p, ([u, st]) => document.querySelector(`.rl-tile[data-uri="${u}"]`)?.dataset.state === st, [uriOf(rkey), state], 20000);
+  const tileCard = (p, rkey) => p.page.locator(`.rl-tile[data-uri="${uriOf(rkey)}"]`);
+  const counter = (p, rkey) => p.page.frameLocator(`.rl-tile[data-uri="${uriOf(rkey)}"] iframe`).locator('#b');
+  async function openTile(p, rkey) { await p.page.fill('.rl-tile-input', uriOf(rkey)); await p.page.click('.rl-tile-open'); }
+
+  step('step 4: Nick, presenting, opens a tile for everyone: the house allows it, the tile takes the stage from his share, and every page opens its own copy');
+  await nick.page.click('.rl-share');
+  await stageShows(robin);
+  assert.equal(await nick.page.locator('.rl-tile-open').textContent(), 'Open for everyone');
+  assert.equal(await robin.page.locator('.rl-tile-open').textContent(), 'Ask to open for everyone');
+  await openTile(nick, 'counter1');
+  for (const p of [nick, robin, ted]) await tileIs(p, 'counter1', 'open');
+  assert.equal(await tileCard(robin, 'counter1').locator('.rl-tile-name').textContent(), 'Counter');
+  assert.equal(await tileCard(robin, 'counter1').locator('.rl-tile-by').textContent(), 'opened by Nick');
+  await stageClear(robin);
+  assert.equal(await sharing(nick), false, 'the tile took the stage');
+  assert.ok(await logHas(nick, /⌂ You: open-tile \("Counter"\): allow — The host may open tiles for everyone\./));
+  assert.ok(await logHas(robin, /← Nick: tile counter1 \(opened by Nick\)/));
+
+  step('each person plays with their own copy: clicks in one copy don\'t reach the others');
+  for (let i = 0; i < 3; i++) await counter(robin, 'counter1').click();
+  await counter(ted, 'counter1').click();
+  assert.equal(await counter(robin, 'counter1').textContent(), '3');
+  assert.equal(await counter(ted, 'counter1').textContent(), '1');
+  assert.equal(await counter(nick, 'counter1').textContent(), '0');
+
+  step('Robin asks to open a tile on Raku\'s hide list: the host\'s page refuses it; nothing opens anywhere');
+  await openTile(robin, 'hidden1');
+  await waitStatus(robin, /That tile isn’t shown here\./);
+  assert.equal(await approval(nick, 'Robin').count(), 0);
+  for (const p of [nick, robin, ted]) assert.equal(await tileState(p, 'hidden1'), null);
+
+  step('the same tile sent anyway (from the host\'s page itself): each page checks for itself and doesn\'t show it');
+  await room(nick, ([u, c]) => { const r = window.__roomsLab.room; r.link.all({ kind: 'tile', uri: u, cid: c, by: r.me }); }, [uriOf('hidden1'), TILES.hidden1.cid]);
+  for (const p of [robin, ted]) {
+    await tileIs(p, 'hidden1', 'hidden');
+    assert.equal(await tileCard(p, 'hidden1').locator('.rl-tile-status').textContent(), 'This tile isn’t shown here.');
+    assert.equal(await tileCard(p, 'hidden1').locator('iframe').count(), 0);
+    await tileCard(p, 'hidden1').locator('.rl-tile-hide').click();
+  }
+
+  step('a tile sent by a guest\'s page (not the host\'s) is ignored everywhere');
+  await room(robin, ([u, c]) => { const r = window.__roomsLab.room; r.link.all({ kind: 'tile', uri: u, cid: c, by: r.me }); }, [uriOf('counter2'), TILES.counter2.cid]);
+  await ted.page.waitForTimeout(1500);
+  for (const p of [nick, ted]) assert.equal(await tileState(p, 'counter2'), null);
+
+  step('Robin asks to open another tile: Nick approves; everyone gets it; Robin hears so');
+  await openTile(robin, 'counter2');
+  await approval(nick, 'Robin asks to open “Counter Two” for everyone.').waitFor();
+  assert.match(await approval(nick, 'Counter Two').textContent(), /House: The host approves tiles opened for everyone\. If you allow it, each person’s page checks the tile and opens its own copy\./);
+  await approval(nick, 'Counter Two').locator('button', { hasText: 'Allow' }).click();
+  await waitStatus(robin, /The host opened the tile for everyone\./);
+  for (const p of [nick, robin, ted]) await tileIs(p, 'counter2', 'open');
+  assert.equal(await tileCard(ted, 'counter2').locator('.rl-tile-by').textContent(), 'opened by Robin');
+
+  step('a tile that changed after it was opened is refused on every page (everyone runs the same version, or nobody does)');
+  await openTile(nick, 'changing1');
+  for (const p of [nick, robin, ted]) await tileIs(p, 'changing1', 'changed');
+  assert.match(await tileCard(robin, 'changing1').locator('.rl-tile-status').textContent(), /has changed since it was opened for everyone/);
+
+  step('a file that isn\'t what the record says is refused (the page checks every file\'s address)');
+  await openTile(nick, 'badblob1');
+  for (const p of [robin, ted]) await tileIs(p, 'badblob1', 'failed');
+  for (const p of [robin, ted]) assert.equal(await tileCard(p, 'badblob1').locator('iframe').count(), 0, 'no empty frame under the refusal');
+
+  if (process.env.SHOTS) {
+    await nick.page.screenshot({ path: `${process.env.SHOTS}/step4-nick.png`, fullPage: true });
+    await robin.page.screenshot({ path: `${process.env.SHOTS}/step4-robin.png`, fullPage: true });
+    await tileCard(robin, 'counter1').screenshot({ path: `${process.env.SHOTS}/step4-robin-tile.png` });
+  }
+  step('Close for everyone (the host) takes a tile off every strip; Hide for me only off your own');
+  assert.equal(await tileCard(robin, 'changing1').locator('.rl-tile-close').isVisible(), false, 'only the host closes for everyone');
+  await tileCard(nick, 'changing1').locator('.rl-tile-close').click();
+  for (const p of [nick, robin, ted]) await until(p, (u) => !document.querySelector(`.rl-tile[data-uri="${u}"]`), uriOf('changing1'));
+  await tileCard(robin, 'counter2').locator('.rl-tile-hide').click();
+  assert.equal(await tileState(robin, 'counter2'), null);
+  assert.equal(await tileState(ted, 'counter2'), 'open');
+
+  step('a newcomer gets the tiles already open; at phone width the strip fits');
+  const zoe = await person('Zoe');
+  await join(zoe, invite, 'Join room');
+  await tileIs(zoe, 'counter1', 'open');
+  await tileIs(zoe, 'counter2', 'open');
+  assert.equal(await counter(zoe, 'counter1').textContent(), '0', 'her own copy');
+  await zoe.page.setViewportSize({ width: 375, height: 760 });
+  assert.equal(await zoe.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  if (process.env.SHOTS) await zoe.page.screenshot({ path: `${process.env.SHOTS}/step4-zoe-phone.png`, fullPage: true });
+  await zoe.ctx.close();
+  await until(nick, () => document.querySelectorAll('.rl-person').length === 3);
+
   step('Robin\'s link to the relay drops: voice carries on, and the page rejoins by itself');
   await robin.page.click('.rl-mic');                                   // Robin unmuted earlier; keep sending
   await robin.page.click('.rl-mic');
@@ -299,6 +458,7 @@ try {
   await nick.page.click('button:has-text("Rejoin as host")');
   await waitStatus(nick, /You're the host/);
   await until(nick, () => document.querySelector('.rl-house-line').dataset.house === 'ready');
+  await tileIs(nick, 'counter1', 'open');                                     // the host's tiles, back after the reload
   await waitStatus(robin, /The host is back/);
   await until(robin, () => document.querySelectorAll('.rl-person').length === 3 && ![...document.querySelectorAll('.rl-person')].some((li) => li.textContent.includes('away')));
   await nick.page.click('.rl-mic');
@@ -319,6 +479,7 @@ try {
 
   step('a room with no house (?house=off): the host approves each request');
   const host2 = await person('Ana'), guest2 = await person('Ben');
+  const guest3 = await person('Cal', { tiles: false });
   await join(host2, `${PAGE}&house=off`, 'New room');
   assert.equal(await host2.page.locator('.rl-house-line').textContent(), 'No house tile: you approve each request yourself.');
   assert.equal(await host2.page.locator('.rl-house iframe').count(), 0);
@@ -330,6 +491,11 @@ try {
   await approval(host2, 'Ben asks').locator('button', { hasText: 'Allow' }).click();
   await promptShown(guest2);
   assert.equal(await guest2.page.locator('.rl-prompt-q').textContent(), 'The host said you can present. Share with 1 person?');
+  await join(guest3, await host2.page.inputValue('.rl-invite'), 'Join room');
+  await openTile(host2, 'counter1');
+  await tileIs(host2, 'counter1', 'open');
+  await tileIs(guest3, 'counter1', 'no-loader');
+  assert.equal(await tileCard(guest3, 'counter1').locator('.rl-tile-status').textContent(), 'This page can’t open tiles (it has no tile loader).');
 
   step('names are shown as typed, never as markup');
   const sneaky = await person('<b>Bold</b>');
