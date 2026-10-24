@@ -123,6 +123,31 @@ export function createTileRecords({ fetchImpl = (...a) => globalThis.fetch(...a)
     return handles.get(did);
   }
 
+  /** A handle (or a DID) → { ok, did } or { ok: false, why }. A handle counts only when it points both ways: the
+   *  resolver gives its DID, and that DID's own document names the handle (as checkedHandle does). Used by the
+   *  page that pastes the address, before its preview: the room only ever sends the DID form. */
+  const dids = new Map();          // handle → Promise<{ ok, did } | { ok: false, why }>
+  function didFor(actor) {
+    if (typeof actor === 'string' && actor.startsWith('did:')) return Promise.resolve({ ok: true, did: actor });
+    const handle = String(actor || '').toLowerCase();
+    if (!HANDLE.test(handle)) return Promise.resolve({ ok: false, why: `"${handle}" isn\u2019t a handle.` });
+    if (!dids.has(handle)) {
+      dids.set(handle, (async () => {
+        const r = await getJson(`${HANDLE_RESOLVER}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`,
+          { timeoutMs: limits.lookupMs, maxBytes: limits.docBytes });
+        const did = r.ok ? r.json?.did : null;
+        if (typeof did !== 'string' || !/^did:(plc:[a-z2-7]{24}|web:[a-z0-9.-]+(%3A[0-9]+)?)$/i.test(did)) {
+          return { ok: false, why: `Couldn\u2019t find the account @${handle}.`, retry: !r.ok && r.status !== 400 };
+        }
+        const a = await account(did);
+        if (!a) return { ok: false, why: `Couldn\u2019t look up the account @${handle}.`, retry: true };
+        if (a.handle !== handle) return { ok: false, why: `@${handle} doesn\u2019t point back to its account, so it isn\u2019t used. Paste the address with the account\u2019s DID instead.` };
+        return { ok: true, did };
+      })().catch(() => ({ ok: false, why: `Couldn\u2019t look up @${handle} right now.`, retry: true })));
+    }
+    return dids.get(handle).then((x) => { if (!x.ok && x.retry) dids.delete(handle); return x; });
+  }
+
   /** The tile's record, read from its author's server: { ok, did, rkey, pds, cid, manifest, name, … } or { ok: false, why }. */
   async function read(uri) {
     const at = parseTileUri(uri);
@@ -183,5 +208,5 @@ export function createTileRecords({ fetchImpl = (...a) => globalThis.fetch(...a)
     };
   }
 
-  return { read, pathLoader, pdsOf, checkedHandle };
+  return { read, pathLoader, pdsOf, checkedHandle, didFor };
 }

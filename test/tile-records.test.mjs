@@ -130,3 +130,41 @@ test('the author\'s handle: shown only when it points back to the same account (
   assert.equal(await records.checkedHandle('did:plc:wrongdocwrongdocwrongdoc'), null, 'the document is for another account');
   assert.equal(await records.pdsOf('did:plc:wrongdocwrongdocwrongdoc'), null, 'and its server isn\'t used either');
 });
+
+test('a handle becomes its DID (for the address box): only when it points both ways; failures to reach the resolver aren\'t kept', async () => {
+  const PRETENDER = 'did:plc:pretenderpretenderpreten';
+  const docs = {
+    [DID]: { id: DID, alsoKnownAs: ['at://thunderbird.cafe'], service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] },
+    [PRETENDER]: { id: PRETENDER, alsoKnownAs: ['at://someone.else.test'], service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] },
+  };
+  let resolverDown = true;
+  const calls = [];
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    const u = new URL(String(url));
+    if (u.origin === 'https://plc.directory') { const d = docs[decodeURIComponent(u.pathname.slice(1))]; return d ? json(d) : json({}, 404); }
+    if (u.origin === 'https://public.api.bsky.app' && u.pathname === '/xrpc/com.atproto.identity.resolveHandle') {
+      if (resolverDown) return json({ error: 'down' }, 502);
+      const h = u.searchParams.get('handle');
+      if (h === 'thunderbird.cafe') return json({ did: DID });
+      if (h === 'claims.someone.test') return json({ did: PRETENDER });       // resolves, but the account doesn't name it
+      if (h === 'odd.answer.test') return json({ did: 'not a did' });
+      return json({ error: 'not found' }, 400);
+    }
+    return new Response('', { status: 404 });
+  };
+  const records = createTileRecords({ fetchImpl });
+  assert.deepEqual(await records.didFor(DID), { ok: true, did: DID }, 'a DID stays as it is, no lookup');
+  assert.equal(calls.length, 0);
+  assert.match((await records.didFor('thunderbird.cafe')).why, /right now|Couldn.t find/, 'the resolver is down…');
+  resolverDown = false;
+  assert.deepEqual(await records.didFor('thunderbird.cafe'), { ok: true, did: DID }, '…not kept: asked again, found, named back');
+  const n = calls.length;
+  assert.deepEqual(await records.didFor('Thunderbird.Cafe'), { ok: true, did: DID }, 'kept, and case doesn\'t matter');
+  assert.equal(calls.length, n);
+  assert.match((await records.didFor('claims.someone.test')).why, /doesn.t point back/);
+  assert.match((await records.didFor('nobody.here.test')).why, /Couldn.t find the account @nobody\.here\.test/);
+  assert.match((await records.didFor('odd.answer.test')).why, /Couldn.t find/);
+  assert.match((await records.didFor('not a handle')).why, /isn.t a handle/);
+});

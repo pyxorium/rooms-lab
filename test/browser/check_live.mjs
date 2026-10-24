@@ -85,7 +85,7 @@ async function standIns(ctx) {
   await ctx.route(HIDE_LIST_URL, (route) => json(route, { version: 1, salt: 'lexicographer.space hide list v1', accounts: [], tiles: [] }));
   await ctx.route('https://public.api.bsky.app/**', (route) => {
     const u = new URL(route.request().url());
-    if (u.pathname === '/xrpc/com.atproto.identity.resolveHandle') return json(route, { did: DID });
+    if (u.pathname === '/xrpc/com.atproto.identity.resolveHandle') return u.searchParams.get('handle') === 'tiles.test' ? json(route, { did: DID }) : json(route, { error: 'InvalidRequest', message: 'Unable to resolve handle' }, 400);
     return json(route, { did: u.searchParams.get('actor'), handle: 'tiles.test', labels: [] });
   });
 }
@@ -126,6 +126,8 @@ async function person(name) {
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
     if (m.text().includes(DATA_JS) || (m.location()?.url || '').includes(DATA_JS)) return;
+    // The handle resolver answers 400 for a handle it can't find (the real one does too); the browser logs it.
+    if ((m.location()?.url || '').includes('/xrpc/com.atproto.identity.resolveHandle?handle=nobody.test')) return;
     errors.push(`${name} console: ${m.text()}`);
   });
   return { name, ctx, page };
@@ -147,8 +149,8 @@ const statusOf = (p, rkey) => poll(p, rkey, () => document.getElementById('statu
 const counts = (p, rkey) => poll(p, rkey, () => [...document.querySelectorAll('.count')].map((c) => +c.textContent));
 const button = (p, rkey, text) => card(p, rkey).locator('.rl-tile-actions button', { hasText: text });
 const visible = async (loc) => (await loc.count()) > 0 && loc.first().isVisible();
-async function openForEveryone(host, rkey) {
-  await host.page.fill('.rl-tile-input', uriOf(rkey));
+async function openForEveryone(host, rkey, address = uriOf(rkey)) {
+  await host.page.fill('.rl-tile-input', address);
   await host.page.click('.rl-tile-preview-go');
   await cardState(host, rkey, 'open');
   await card(host, rkey).locator('button', { hasText: 'Open for everyone' }).click();
@@ -174,9 +176,21 @@ try {
   const nickPeer = await room(nick, () => window.__roomsLab.room.me);
   for (const p of [robin, ted]) await until(p, (h) => window.__roomsLab.room.mesh.channelOpen(h), nickPeer);
 
-  step('Nick opens the poll and a counter for everyone; each page runs its own copy; not live yet: every copy is "Just you"');
-  await openForEveryone(nick, 'poll');
-  await openForEveryone(nick, 'counter');
+  step('addresses as Raku and the viewers show them: an unknown handle is refused with a reason; nothing is opened');
+  await nick.page.fill('.rl-tile-input', 'at://nobody.test/ing.dasl.masl/poll');
+  await nick.page.click('.rl-tile-preview-go');
+  await until(nick, () => /Couldn’t find the account @nobody\.test\./.test(document.querySelector('.rl-status').textContent));
+  assert.equal(await nick.page.locator('.rl-tile').count(), 0);
+  await nick.page.fill('.rl-tile-input', 'https://example.com/not-a-tile');
+  await nick.page.click('.rl-tile-preview-go');
+  await until(nick, () => /not other web pages/.test(document.querySelector('.rl-status').textContent));
+
+  step('Nick opens the poll (from a lexicographer.space link) and a counter (at:// with the handle, as Raku shows it) for everyone; each page runs its own copy; not live yet: every copy is "Just you"');
+  await openForEveryone(nick, 'poll', 'https://lexicographer.space/@tiles.test/poll');
+  await openForEveryone(nick, 'counter', 'at://tiles.test/ing.dasl.masl/counter');
+  const tileMsgs = await room(nick, () => window.__relayOut.filter((m) => m.includes('"tile"')).join('\n'));
+  assert.ok(tileMsgs.includes(uriOf('poll')) && tileMsgs.includes(uriOf('counter')), 'the room was sent the DID form');
+  assert.ok(!/tiles\.test|lexicographer/.test(tileMsgs), 'never the handle or the link');
   for (const p of [nick, robin, ted]) { await cardState(p, 'poll', 'open'); await cardState(p, 'counter', 'open'); }
   for (const p of [nick, robin, ted]) await pollUntil(p, 'poll', () => /^Just you\./.test(document.getElementById('status').textContent));
   assert.equal(await poll(robin, 'poll', () => document.documentElement.dataset.live), 'room', 'a page answered (not a lone copy)');

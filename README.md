@@ -57,8 +57,11 @@ and open its invite link in the other. This runs the real relay code on this com
 then approves each request). Three windows show the house best: a guest asking to see another guest's
 screen goes to the host for approval.
 
-To open a tile for everyone, paste its address (`at://…/ing.dasl.masl/…`) under "Tiles opened for
-everyone", click Preview, then Open for everyone in the preview. Tiles open through the real tile loader
+To open a tile for everyone, paste its address under "Tiles opened for
+everyone", click Preview, then Open for everyone in the preview. The box takes the forms Raku takes
+(`src/address.js`, a copy of Raku's): `at://` with a handle or a DID (as Raku shows tiles), lexicographer.space
+and appmosphe.re links (`/@handle/rkey`), webtil.es links, `tile://…` and `@handle/rkey`. A handle is turned
+into its DID on your own page (it must point both ways); the room is only ever sent the DID form. Tiles open through the real tile loader
 (`@dasl/tile-loader`, bundled by `serve.mjs`), so they load from `load.tiles.lexicographer.space` as on the
 site. Without `npm install` here the page still runs, and says it can't open tiles. (The browser check opens
 tiles through a stand-in for the loader, since it can't install it.)
@@ -140,7 +143,9 @@ and nothing is kept: when the room ends, they're gone.
 - `src/live.js`: live tiles: the envelope, each copy's id, the hub on the host's page (one order, the
   limits: 16 KB a message, 10 a second per copy, 60 a second and 128 KB a second for the whole room), the
   checks on every receiving page, paused and resumed.
-- `src/tile-records.js`: a tile's record from its author's server (did:plc or did:web), and a file loader
+- `src/address.js`: what the address box accepts (a copy of the tile-address part of Raku's `address.js`).
+- `src/tile-records.js`: a tile's record from its author's server (did:plc or did:web), a handle turned into
+  its DID (both ways), and a file loader
   pinned to that record (every file checked by its content address; at most 50 MB a tile); the author's
   handle, shown only when it points back to the same account.
 - `src/hide-check.js`: would Raku refuse it? The coded hide list from lexicographer.space and Bluesky's

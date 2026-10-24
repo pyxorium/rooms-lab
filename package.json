@@ -1,6 +1,6 @@
 {
   "name": "rooms-lab",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "The Rooms lab: small live rooms for tile demos among friends (a proof of concept for thunderbird.cafe)",
   "private": true,
   "license": "UNLICENSED",

@@ -48,6 +48,7 @@ import { createHideCheck } from './hide-check.js';
 import { createTileStrip, MAX_TILES } from './tile-strip.js';
 import { relayUrl, ICE_SERVERS, TIMES } from './config.js';
 import { createLiveTiles, readPeerLive } from './live.js';
+import { parseAddress, HINT } from './address.js';
 
 export const h = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -245,7 +246,7 @@ export function mountRoomPage(root, options = {}) {
     els.houseLine = h('p', { class: 'rl-house-line', hidden: true });
     els.houseMount = h('div', { class: 'rl-house', hidden: true });
     els.approvals = h('div', { class: 'rl-approvals' });
-    els.tileInput = h('input', { class: 'rl-tile-input', type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: 'at://\u2026/ing.dasl.masl/\u2026', 'aria-label': 'A tile\u2019s address' });
+    els.tileInput = h('input', { class: 'rl-tile-input', type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: 'at://\u2026/ing.dasl.masl/\u2026 or a tile link', 'aria-label': 'A tile\u2019s address' });
     els.tileButton = h('button', { type: 'submit', class: 'rl-tile-preview-go' }, 'Preview');
     els.tileForm = h('form', { class: 'rl-tile-form', onsubmit: (ev) => { ev.preventDefault(); previewTile(); } }, els.tileInput, els.tileButton);
     els.strip = h('ul', { class: 'rl-strip' });
@@ -264,7 +265,7 @@ export function mountRoomPage(root, options = {}) {
       h('section', { class: 'rl-tiles' },
         h('h2', {}, 'Tiles opened for everyone'),
         els.tileForm,
-        h('p', { class: 'rl-help' }, 'Paste a tile\u2019s address and preview it (only you see the preview). Then open it for everyone: each person gets their own copy, and each page checks it first.'),
+        h('p', { class: 'rl-help' }, 'Paste a tile\u2019s address (as Raku shows it, or a viewer\u2019s link) and preview it (only you see the preview). Then open it for everyone: each person gets their own copy, and each page checks it first.'),
         els.strip),
       h('h2', {}, 'Here'),
       els.people,
@@ -627,11 +628,26 @@ export function mountRoomPage(root, options = {}) {
   const canAskTile = () => { const r = room; return !!r?.link?.joined && r.wishes.size === 0 && hostHere(); };
 
   // The address box only previews: the tile runs on this page alone, after the same checks as everyone's.
-  function previewTile() {
+  // It takes the forms Raku takes (address.js): at:// with a handle or a DID, the viewers' links, webtil.es,
+  // tile://. A handle is turned into its DID here, on the page that pasted it (checked both ways); the room
+  // only ever sends the DID form.
+  async function previewTile() {
     const r = room;
-    const at = parseTileUri(r.els.tileInput.value);
-    if (!at) { say('Paste a tile\u2019s address: at://\u2026/ing.dasl.masl/\u2026'); return; }
-    const uri = `at://${at.did}/ing.dasl.masl/${at.rkey}`;
+    const a = parseAddress(r.els.tileInput.value);
+    if (!a.ok) { say(a.reason); return; }
+    let did = a.actor;
+    if (!a.actor.startsWith('did:')) {
+      say(`Looking up @${a.actor}\u2026`);
+      r.els.tileButton.disabled = true;
+      const d = await records.didFor(a.actor);
+      if (room !== r || r.over) return;
+      r.els.tileButton.disabled = !r.link?.joined;
+      if (!d.ok) { say(d.why); return; }
+      did = d.did;
+      say('');
+    }
+    const uri = `at://${did}/ing.dasl.masl/${a.rkey}`;
+    if (!parseTileUri(uri)) { say(HINT); return; }
     if (r.strip.isShared(uri)) { say('That tile is already open for everyone.'); return; }
     r.els.tileInput.value = '';
     r.strip.preview(uri, { buttons: [
