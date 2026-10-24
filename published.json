@@ -2,9 +2,15 @@
   "account": "did:plc:6vxjigxrqizmbo56gojxico3",
   "handle": "thunderbird.cafe",
   "house": {
-    "uri": "at://did:plc:6vxjigxrqizmbo56gojxico3/ing.dasl.masl/3mylumvep4r2b",
-    "cid": "bafyreibwt44dgseqngksrq4s4m5wykrgr3wmgsxoyu5kmrkfu2ynwf26oe",
-    "manifestCid": "bafyreieu7lonwjtyjirannvwsddwreieamm6lgmykyctxvk5727u7ufpxq",
-    "publishedAt": "2026-10-24T04:36:58.734Z"
+    "uri": "at://did:plc:6vxjigxrqizmbo56gojxico3/ing.dasl.masl/3mymwzw63gp2g",
+    "cid": "bafyreidyssz5pnugrwbjs22g3kbgfgdqpyztae3cyeuxdol5xamt4hm5ue",
+    "manifestCid": "bafyreihazr2spww3xv4dkftlcipf3ni4vensbe4kbclab5pijhidm5i3cq",
+    "publishedAt": "2026-10-24T14:52:43.261Z"
+  },
+  "poll": {
+    "uri": "at://did:plc:6vxjigxrqizmbo56gojxico3/ing.dasl.masl/3mymx23m2nf24",
+    "cid": "bafyreibt4akltal6x47rvbkawbugikf4ho4tjxyhdmjhfjket5phiq2bga",
+    "manifestCid": "bafyreigbghyolh4ojxu3cbwqxyjroeszskkhvgklsrxaiern3tpgdsqtfa",
+    "publishedAt": "2026-10-24T14:52:49.006Z"
   }
 }
