@@ -83,6 +83,9 @@ test('what other pages send is checked: known kinds only, sizes limited, extra f
   const CID = 'bafyreidwwralslcgks5hwet7adtcthwti74k7vo47bcuipbwcqmspqk5zu';
   assert.equal(readPeerData({ kind: 'wish', id: 'abc', wish: 'open-tile', uri: 'at://x' }), null, 'only a tile address');
   assert.deepEqual(readPeerData({ kind: 'wish', id: 'abc', wish: 'open-tile', uri: TILE }), { kind: 'wish', id: 'abc', wish: 'open-tile', uri: TILE });
+  const PREVIEWED = `bafyrei${'q'.repeat(52)}`;
+  assert.deepEqual(readPeerData({ kind: 'wish', id: 'abc', wish: 'open-tile', uri: TILE, cid: PREVIEWED }), { kind: 'wish', id: 'abc', wish: 'open-tile', uri: TILE, cid: PREVIEWED }, 'the version previewed (step 4b)');
+  assert.equal(readPeerData({ kind: 'wish', id: 'abc', wish: 'open-tile', uri: TILE, cid: 'not a cid' }), null);
   // tiles opened for everyone (step 4)
   assert.deepEqual(readPeerData({ kind: 'tile', uri: TILE, cid: CID, by: 'robin-peer-1', name: '<b>x</b>' }), { kind: 'tile', uri: TILE, cid: CID, by: 'robin-peer-1' }, 'no name: each page reads the record itself');
   assert.equal(readPeerData({ kind: 'tile', uri: TILE, cid: 'Qm123', by: 'robin-peer-1' }), null);

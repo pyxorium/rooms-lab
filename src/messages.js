@@ -13,7 +13,8 @@
 //   { kind: "ask-answer", id, answer }             the person asked, to the asker: "yes" | "no" | "busy" | "already"
 // None of these makes a page share: sharing always starts from the person's own click, then the picker.
 // Tiles opened for everyone (build step 4), from the host's page only:
-//   { kind: "wish", id, wish: "open-tile", uri }   to the host: "open this tile for everyone"
+//   { kind: "wish", id, wish: "open-tile", uri, cid? }  to the host: "open this tile for everyone" (cid: the
+//                                                  version the asker previewed, step 4b; the host refuses another)
 //   { kind: "tile", uri, cid, by }                 to everyone: open this tile, this exact version (record CID)
 //   { kind: "tiles", list: [{ uri, cid, by }] }    to someone who just came in: the tiles open now
 //   { kind: "tile-close", uri }                    to everyone: the host closed it
@@ -55,7 +56,10 @@ export function readPeerData(d) {
     case 'wish':
       if (!isId(d.id) || !PAGE_WISHES.includes(d.wish)) return null;
       if (d.wish === 'see-screen') return isPeer(d.target) ? { kind: 'wish', id: d.id, wish: d.wish, target: d.target } : null;
-      if (d.wish === 'open-tile') return isTileUri(d.uri) ? { kind: 'wish', id: d.id, wish: d.wish, uri: d.uri } : null;
+      if (d.wish === 'open-tile') {
+        if (!isTileUri(d.uri) || !(d.cid === undefined || isRecordCid(d.cid))) return null;
+        return { kind: 'wish', id: d.id, wish: d.wish, uri: d.uri, ...(d.cid ? { cid: d.cid } : {}) };
+      }
       return { kind: 'wish', id: d.id, wish: d.wish };
     case 'wish-result':
       if (!isId(d.id) || !['allow', 'deny'].includes(d.decision)) return null;

@@ -23,6 +23,13 @@ framework, which Raku can import as they are.
    checked against the record. Each person plays with their own copy; nothing in it is sent. At most 6
    tiles; the host's "Close for everyone", anyone's "Hide for me". Opening a tile while you present gives
    it the stage (your share stops).
+   **4b. Preview first** (`src/tile-strip.js`): the address box only previews. The tile runs on your page
+   alone ("Only you can see this"), after the same checks, with its author's handle (checked both ways, as
+   Raku does; otherwise the DID) and size; then **Open for everyone** (the host) or **Ask to open for
+   everyone** (a guest), or **Cancel**. The host can preview a guest's request from the approval card and
+   Allow or Deny from the preview. What's sent is the version previewed (a request carries its CID, and the
+   host's page refuses a newer one), and the preview becomes your card in place: the same frame, still
+   running, so nothing loads twice and what you did in it stays.
 5. Live: the house tile published, the relay deployed, the page on thunderbird.cafe.
 
 ## Try it on this computer
@@ -41,11 +48,11 @@ and open its invite link in the other. This runs the real relay code on this com
 then approves each request). Three windows show the house best: a guest asking to see another guest's
 screen goes to the host for approval.
 
-To open a tile for everyone, paste its address (`at://…/ing.dasl.masl/…`, as Raku shows it) under "Tiles
-opened for everyone". Tiles open through the real tile loader (`@dasl/tile-loader`, bundled by
-`serve.mjs`), so they load from `load.tiles.lexicographer.space` as on the site. Without `npm install`
-here the page still runs, and says it can't open tiles. (The browser check opens tiles through a stand-in for the
-loader, since it can't install it; the real loader is checked the site's way in step 5.)
+To open a tile for everyone, paste its address (`at://…/ing.dasl.masl/…`) under "Tiles opened for
+everyone", click Preview, then Open for everyone in the preview. Tiles open through the real tile loader
+(`@dasl/tile-loader`, bundled by `serve.mjs`), so they load from `load.tiles.lexicographer.space` as on the
+site. Without `npm install` here the page still runs, and says it can't open tiles. (The browser check opens
+tiles through a stand-in for the loader, since it can't install it.)
 
 On one computer both windows hear the same microphone, so expect echo: mute one, or use headphones.
 
@@ -56,9 +63,11 @@ On one computer both windows hear the same microphone, so expect echo: mute one,
   connection), "Ask to see screen", the host's approval cards (Allow / Deny), the sharer's prompt
   ("Choose what to share…" / Not now), the host's Remove and End room, and the room's messages (wishes,
   the house's decisions, answers), and the strip of tiles opened for everyone.
-- `src/tile-strip.js`: the strip: each tile checked (hidden? same version?), then opened, newest first.
+- `src/tile-strip.js`: the strip: each tile checked (hidden? same version?), then opened, newest first;
+  and the private preview, which becomes the card in place when the tile is opened for everyone.
 - `src/tile-records.js`: a tile's record from its author's server (did:plc or did:web), and a file loader
-  pinned to that record (every file checked by its content address; at most 50 MB a tile).
+  pinned to that record (every file checked by its content address; at most 50 MB a tile); the author's
+  handle, shown only when it points back to the same account.
 - `src/hide-check.js`: would Raku refuse it? The coded hide list from lexicographer.space and Bluesky's
   moderation, the same checks as Raku's (it never says which, or why).
 - `src/house-bridge.js`: the host's page holding the house tile: fixed rules for what passes between them,

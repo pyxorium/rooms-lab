@@ -18,6 +18,7 @@ export const TIMES = Object.freeze({
   noRoomRetryMs: 3000,      // a guest whose room isn't there (yet, or after a relay restart) tries again this often…
   noRoomTries: 20,          // …this many times (a minute), then gives up
   askTimeoutMs: 60_000,     // an unanswered "asks to see your screen" closes after a minute
+  tileAskTimeoutMs: 180_000, // an unanswered request to open a tile for everyone: three minutes (the host may try it first)
 });
 
 export const isLocal = (loc) => loc.hostname === '127.0.0.1' || loc.hostname === 'localhost';

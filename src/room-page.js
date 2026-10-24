@@ -25,6 +25,10 @@
 // the tile's record (its CID: this exact version), checks Raku's hide list, and asks the house (the host may
 // open tiles; anyone else, the host approves). Then the host's page sends the address and CID to everyone,
 // and each page checks the tile again for itself and opens its own copy in the strip (tile-strip.js).
+// Preview first (step 4b): the address box only previews. Whoever opens a tile (or asks to) runs it on their
+// own page first, privately, after the same checks; the host can preview a guest's request from its approval
+// card. What's sent is the version previewed (a request carries its CID; the host refuses another), and the
+// preview becomes that person's card in place, still running.
 import { connectRoom } from './room-link.js';
 import { createMesh } from './mesh.js';
 import { createLevels } from './levels.js';
@@ -209,8 +213,8 @@ export function mountRoomPage(root, options = {}) {
     els.houseMount = h('div', { class: 'rl-house', hidden: true });
     els.approvals = h('div', { class: 'rl-approvals' });
     els.tileInput = h('input', { class: 'rl-tile-input', type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: 'at://\u2026/ing.dasl.masl/\u2026', 'aria-label': 'A tile\u2019s address' });
-    els.tileButton = h('button', { type: 'submit', class: 'rl-tile-open' }, 'Open for everyone');
-    els.tileForm = h('form', { class: 'rl-tile-form', onsubmit: (ev) => { ev.preventDefault(); askOpenTile(); } }, els.tileInput, els.tileButton);
+    els.tileButton = h('button', { type: 'submit', class: 'rl-tile-preview-go' }, 'Preview');
+    els.tileForm = h('form', { class: 'rl-tile-form', onsubmit: (ev) => { ev.preventDefault(); previewTile(); } }, els.tileInput, els.tileButton);
     els.strip = h('ul', { class: 'rl-strip' });
     els.prompt = h('div', { class: 'rl-prompt', role: 'alertdialog', 'aria-live': 'assertive', hidden: true });
     els.people = h('ul', { class: 'rl-people' });
@@ -227,7 +231,7 @@ export function mountRoomPage(root, options = {}) {
       h('section', { class: 'rl-tiles' },
         h('h2', {}, 'Tiles opened for everyone'),
         els.tileForm,
-        h('p', { class: 'rl-help' }, 'Paste a tile\u2019s address. Everyone gets their own copy to play with; each page checks it first.'),
+        h('p', { class: 'rl-help' }, 'Paste a tile\u2019s address and preview it (only you see the preview). Then open it for everyone: each person gets their own copy, and each page checks it first.'),
         els.strip),
       h('h2', {}, 'Here'),
       els.people,
@@ -366,7 +370,7 @@ export function mountRoomPage(root, options = {}) {
   const hostHere = () => { const hp = hostPeer(); return !!hp && !hp.away; };
 
   // ---- Wishes: asking (anyone) ----
-  function wish(kind, target = null, uri = null) {
+  function wish(kind, target = null, uri = null, cid = null) {
     const r = room;
     if (!r || !r.link.joined || r.wishes.size) return;
     const screens = kind !== 'open-tile';
@@ -375,14 +379,16 @@ export function mountRoomPage(root, options = {}) {
     const hp = hostPeer();
     if (!hp || hp.away) { say('Waiting for the host to come back.'); return; }
     const id = newRoomCode();
-    r.wishes.set(id, { wish: kind, target, uri, stage: 'host', timer: setTimeout(() => dropWish(id, 'No answer.'), o.times.askTimeoutMs * 2) });
-    const w = { kind: 'wish', id, wish: kind, ...(target ? { target } : {}), ...(uri ? { uri } : {}) };
+    const waitMs = kind === 'open-tile' ? tileAskMs() + o.times.askTimeoutMs : o.times.askTimeoutMs * 2;
+    r.wishes.set(id, { wish: kind, target, uri, stage: 'host', timer: setTimeout(() => dropWish(id, 'No answer.'), waitMs) });
+    const w = { kind: 'wish', id, wish: kind, ...(target ? { target } : {}), ...(uri ? { uri } : {}), ...(cid ? { cid } : {}) };
     if (r.host) { if (kind === 'open-tile') say('Opening the tile for everyone\u2026'); handleWish(r.me, w); }
     else {
       r.link.to(hp.peer, w);
       note('→', hp.peer, describe(w));
       say(kind === 'see-screen' ? `Asked the host if you can see ${nameOf(target)}\u2019s screen\u2026`
         : kind === 'open-tile' ? 'Asked the host to open the tile for everyone\u2026' : 'Asked the host if you can present\u2026');
+      if (kind === 'open-tile') r.strip.noteOn(uri, 'Asked the host\u2026');
     }
     renderPeople();
   }
@@ -394,6 +400,7 @@ export function mountRoomPage(root, options = {}) {
     clearTimeout(w.timer);
     r.wishes.delete(id);
     if (why) say(why);
+    if (why && w.wish === 'open-tile') r.strip.noteOn(w.uri, why);
     render();
   }
 
@@ -467,6 +474,7 @@ export function mountRoomPage(root, options = {}) {
       const rec = await records.read(w.uri);
       if (room !== r || r.over) return;
       if (!rec.ok) return no(rec.why);
+      if (w.cid && rec.cid !== w.cid) return no('That tile changed since it was previewed. Preview it again.');
       let hidden = false;
       try { hidden = await hideCheck.isHidden(rec.did, rec.rkey); } catch { hidden = false; }
       if (room !== r || r.over) return;
@@ -495,21 +503,37 @@ export function mountRoomPage(root, options = {}) {
       h('p', { class: 'rl-prompt-q' }, text),
       h('p', { class: 'rl-help' }, `${d.by === 'house' ? 'House' : 'No house'}: ${d.reason} If you allow it, ${after}.`),
       h('div', { class: 'rl-actions' },
-        h('button', { type: 'button', class: 'rl-primary', onclick: () => { closeApproval(key); carry(from, w); } }, 'Allow'),
-        h('button', { type: 'button', onclick: () => { closeApproval(key); r.hostWishes.delete(from); result(from, w.id, 'deny', 'The host said no.'); } }, 'Deny')));
+        h('button', { type: 'button', class: 'rl-primary', onclick: () => allow() }, 'Allow'),
+        h('button', { type: 'button', onclick: () => deny() }, 'Deny'),
+        w.wish === 'open-tile' ? h('button', { type: 'button', class: 'rl-approval-preview', onclick: () => previewRequest() }, 'Preview') : null));
+    const allow = () => { closeApproval(key, { keepPreview: true }); carry(from, w); };
+    const deny = () => { closeApproval(key); r.hostWishes.delete(from); result(from, w.id, 'deny', 'The host said no.'); };
+    // The host runs the asked-for tile privately first, at the version asked for; Allow sends that version,
+    // and the preview becomes the host's card in place.
+    const previewRequest = () => {
+      const a = r.approvals.get(key);
+      if (!a) return;
+      a.previewing = true;
+      r.strip.preview(w.uri, { cid: w.rec.cid, buttons: [
+        { text: 'Allow', cls: 'rl-primary rl-tile-allow', onclick: () => allow() },
+        { text: 'Deny', cls: 'rl-tile-deny', onclick: () => deny() },
+      ] });
+      r.strip.noteOn(w.uri, `${nameOf(from)} asks to open this for everyone.`);
+    };
     r.approvals.set(key, { from, w, el, timer: setTimeout(() => {
       if (!r.approvals.has(key)) return;
       closeApproval(key); r.hostWishes.delete(from); result(from, w.id, 'deny', 'The host didn\u2019t answer.');
-    }, o.times.askTimeoutMs) });
+    }, w.wish === 'open-tile' ? tileAskMs() : o.times.askTimeoutMs) });
     r.els.approvals.append(el);
     say(text);
   }
 
-  function closeApproval(key) {
+  function closeApproval(key, { keepPreview = false } = {}) {
     const r = room;
     const a = r?.approvals.get(key);
     if (!a) return;
     clearTimeout(a.timer);
+    if (a.previewing && !keepPreview) r.strip.removePreview(a.w.uri);
     a.el.remove();
     r.approvals.delete(key);
   }
@@ -544,12 +568,22 @@ export function mountRoomPage(root, options = {}) {
   }
 
   // ---- Tiles opened for everyone ----
-  function askOpenTile() {
+  const tileAskMs = () => o.times.tileAskTimeoutMs ?? o.times.askTimeoutMs * 3;
+  const canAskTile = () => { const r = room; return !!r?.link?.joined && r.wishes.size === 0 && hostHere(); };
+
+  // The address box only previews: the tile runs on this page alone, after the same checks as everyone's.
+  function previewTile() {
     const r = room;
-    const v = r.els.tileInput.value.trim();
-    if (!parseTileUri(v)) { say('Paste a tile\u2019s address: at://\u2026/ing.dasl.masl/\u2026'); return; }
+    const at = parseTileUri(r.els.tileInput.value);
+    if (!at) { say('Paste a tile\u2019s address: at://\u2026/ing.dasl.masl/\u2026'); return; }
+    const uri = `at://${at.did}/ing.dasl.masl/${at.rkey}`;
+    if (r.strip.isShared(uri)) { say('That tile is already open for everyone.'); return; }
     r.els.tileInput.value = '';
-    wish('open-tile', null, v);
+    r.strip.preview(uri, { buttons: [
+      { text: r.host ? 'Open for everyone' : 'Ask to open for everyone', cls: 'rl-primary rl-tile-open', needsOpen: true,
+        disabled: () => !canAskTile(), onclick: (e) => wish('open-tile', null, e.uri, e.cid) },
+      { text: 'Cancel', cls: 'rl-tile-cancel', onclick: (e) => r.strip.removePreview(e.uri) },
+    ] });
   }
 
   function tilesFull(uri) {
@@ -770,8 +804,8 @@ export function mountRoomPage(root, options = {}) {
     share.textContent = r.screenTrack ? 'Stop sharing' : other ? `${nameOf(r.presenter)} is presenting` : asking ? 'Asked the host\u2026' : 'Share my screen';
     share.disabled = !r.screenTrack && r.prompt?.type !== 'go' && (!!other || !r.link?.joined || r.wishes.size > 0 || !hostHere());
     hostTools.hidden = !r.host;
-    r.els.tileButton.textContent = r.host ? 'Open for everyone' : 'Ask to open for everyone';
-    r.els.tileButton.disabled = !r.link?.joined || r.wishes.size > 0 || !hostHere();
+    r.els.tileButton.disabled = !r.link?.joined;
+    r.strip?.refresh();
     leaveBtn.hidden = r.host;
   }
 

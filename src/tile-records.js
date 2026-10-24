@@ -10,8 +10,13 @@
 // The record and files come from the author's server: did:plc accounts through plc.directory, did:web
 // accounts through their own /.well-known/did.json (as the site's at-tile-loader.js). Nothing here runs a
 // tile: the tile loader does (the page is given a `tileHost`), in a sealed frame on the loading server.
+//
+// The author's handle (step 4b, shown in the preview and on each card) is checked both ways, as Raku's
+// resolve.js does: the DID document names it (alsoKnownAs), and the handle resolves back to the same DID
+// (public.api.bsky.app). Otherwise there's no handle, and the page shows the DID.
 
 export const COLLECTION = 'ing.dasl.masl';
+export const HANDLE_RESOLVER = 'https://public.api.bsky.app';
 export const TILE_URI = /^at:\/\/(did:(?:plc:[a-z2-7]{24}|web:[a-z0-9.-]+(?:%3A[0-9]+)?))\/ing\.dasl\.masl\/([A-Za-z0-9._~:-]{1,512})$/i;
 export const isRecordCid = (x) => typeof x === 'string' && /^b[a-z2-7]{20,120}$/.test(x);
 export const LIMITS = Object.freeze({
@@ -28,6 +33,7 @@ export function parseTileUri(uri) {
   return m ? { did: m[1], rkey: m[2] } : null;
 }
 
+const HANDLE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/i;
 const NOT_FOUND = { ok: false, status: 404, statusText: 'Not found' };
 // Same header list as @dasl/tile-loader's lib/masl.js (not exported by the package).
 const MASL_HEADERS = ['content-disposition', 'content-encoding', 'content-language', 'content-security-policy', 'content-type',
@@ -62,7 +68,8 @@ const blobCidOf = (entry) => {
 };
 
 export function createTileRecords({ fetchImpl = (...a) => globalThis.fetch(...a), limits = LIMITS } = {}) {
-  const pdsCache = new Map();
+  const accounts = new Map();      // did → Promise<{ pds, handle (unchecked) } | null>
+  const handles = new Map();       // did → Promise<checked handle | null>
 
   async function get(url, { timeoutMs, maxBytes }) {
     const ctl = new AbortController();
@@ -82,18 +89,38 @@ export function createTileRecords({ fetchImpl = (...a) => globalThis.fetch(...a)
     try { return { ...r, json: JSON.parse(new TextDecoder().decode(r.bytes)) }; } catch { return { ok: false, status: r.status }; }
   };
 
-  function pdsOf(did) {
-    if (!pdsCache.has(did)) {
-      pdsCache.set(did, (async () => {
+  function account(did) {
+    if (!accounts.has(did)) {
+      accounts.set(did, (async () => {
         const web = /^did:web:(.+)$/i.exec(did);
         const url = web ? `https://${web[1].replace(/%3A/i, ':')}/.well-known/did.json` : `https://plc.directory/${did}`;
         const r = await getJson(url, { timeoutMs: limits.lookupMs, maxBytes: limits.docBytes });
-        const svc = r.ok && Array.isArray(r.json?.service) ? r.json.service.find((s) => s && (s.id === '#atproto_pds' || s.id === `${did}#atproto_pds`)) : null;
+        if (!r.ok || !r.json || r.json.id !== did) return null;
+        const svc = Array.isArray(r.json.service) ? r.json.service.find((s) => s && (s.id === '#atproto_pds' || s.id === `${did}#atproto_pds`)) : null;
         const ep = svc && typeof svc.serviceEndpoint === 'string' ? svc.serviceEndpoint.replace(/\/+$/, '') : null;
-        return ep && /^https:\/\/[^\s/]+$/i.test(ep) ? ep : null;
+        const aka = Array.isArray(r.json.alsoKnownAs) ? r.json.alsoKnownAs.find((x) => typeof x === 'string' && x.startsWith('at://')) : null;
+        const handle = aka && HANDLE.test(aka.slice(5)) ? aka.slice(5).toLowerCase() : null;
+        return ep && /^https:\/\/[^\s/]+$/i.test(ep) ? { pds: ep, handle } : null;
       })().catch(() => null));
     }
-    return pdsCache.get(did).then((p) => { if (!p) pdsCache.delete(did); return p; });
+    return accounts.get(did).then((a) => { if (!a) accounts.delete(did); return a; });
+  }
+  const pdsOf = async (did) => (await account(did))?.pds ?? null;
+
+  /** The author's handle, only if it points back to the same DID; else null (show the DID). */
+  function checkedHandle(did) {
+    if (!handles.has(did)) {
+      handles.set(did, (async () => {
+        const a = await account(did);
+        if (!a) throw new Error('not now');               // the account lookup failed: not kept
+        if (!a.handle) return null;
+        const r = await getJson(`${HANDLE_RESOLVER}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(a.handle)}`,
+          { timeoutMs: limits.lookupMs, maxBytes: limits.docBytes });
+        if (!r.ok) throw new Error('not now');            // not kept: try again next time
+        return r.json?.did === did ? a.handle : null;
+      })().catch(() => { handles.delete(did); return null; }));
+    }
+    return handles.get(did);
   }
 
   /** The tile's record, read from its author's server: { ok, did, rkey, pds, cid, manifest, name, … } or { ok: false, why }. */
@@ -156,5 +183,5 @@ export function createTileRecords({ fetchImpl = (...a) => globalThis.fetch(...a)
     };
   }
 
-  return { read, pathLoader, pdsOf };
+  return { read, pathLoader, pdsOf, checkedHandle };
 }

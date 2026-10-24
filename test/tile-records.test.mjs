@@ -97,3 +97,36 @@ test('the tile\'s files: served only as the record lists them, each checked agai
   assert.equal((await l2.resolvePath('/')).ok, false, 'not the pinned bytes');
   assert.deepEqual(seen.at(-1), ['/', false]);
 });
+
+test('the author\'s handle: shown only when it points back to the same account (checked both ways, as Raku)', async () => {
+  const docs = {
+    [DID]: { id: DID, alsoKnownAs: ['at://thunderbird.cafe'], service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] },
+    'did:plc:pretenderpretenderpreten': { id: 'did:plc:pretenderpretenderpreten', alsoKnownAs: ['at://thunderbird.cafe'], service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] },
+    'did:plc:nohandlenohandlenohandle': { id: 'did:plc:nohandlenohandlenohandle', service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] },
+    'did:plc:wrongdocwrongdocwrongdoc': { id: 'did:plc:someoneelsesomeoneelseso', alsoKnownAs: ['at://thunderbird.cafe'], service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] },
+  };
+  let resolverDown = true;
+  const calls = [];
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    const u = new URL(String(url));
+    if (u.origin === 'https://plc.directory') { const d = docs[decodeURIComponent(u.pathname.slice(1))]; return d ? json(d) : json({}, 404); }
+    if (u.origin === 'https://public.api.bsky.app' && u.pathname === '/xrpc/com.atproto.identity.resolveHandle') {
+      if (resolverDown) return json({ error: 'down' }, 502);
+      return u.searchParams.get('handle') === 'thunderbird.cafe' ? json({ did: DID }) : json({ error: 'not found' }, 400);
+    }
+    return new Response('', { status: 404 });
+  };
+  const records = createTileRecords({ fetchImpl });
+  assert.equal(await records.checkedHandle(DID), null, 'the resolver is down: no handle yet…');
+  resolverDown = false;
+  assert.equal(await records.checkedHandle(DID), 'thunderbird.cafe', '…and that wasn\'t kept: asked again, confirmed');
+  const n = calls.length;
+  assert.equal(await records.checkedHandle(DID), 'thunderbird.cafe');
+  assert.equal(calls.length, n, 'a confirmed handle is kept');
+  assert.equal(await records.checkedHandle('did:plc:pretenderpretenderpreten'), null, 'claims a handle that belongs to someone else');
+  assert.equal(await records.checkedHandle('did:plc:nohandlenohandlenohandle'), null, 'names no handle');
+  assert.equal(await records.checkedHandle('did:plc:wrongdocwrongdocwrongdoc'), null, 'the document is for another account');
+  assert.equal(await records.pdsOf('did:plc:wrongdocwrongdocwrongdoc'), null, 'and its server isn\'t used either');
+});

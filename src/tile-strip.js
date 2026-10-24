@@ -8,13 +8,22 @@
 //   3. The tile itself, through the page's tile loader (`tileHost`), every file checked against the record.
 // Each person plays with their own copy, independently; nothing they do in it is sent anywhere by the room.
 // "Hide for me" takes it off your own strip; the host's "Close for everyone" takes it off everyone's.
+//
+// Previews (step 4b): before a tile goes to everyone, whoever opens it (or asks to, or approves it) runs it
+// here first, privately ("Only you can see this"), after the same checks. Its buttons come from the room
+// page (Open for everyone / Ask… / Allow, Deny; Cancel). When the tile is then opened for everyone at the
+// same version, the preview card becomes that person's ordinary card *in place*: the frame is never moved
+// (a browser reloads a frame that moves), so the tile keeps running and nothing loads twice.
 import { parseTileUri } from './tile-records.js';
 
 export const MAX_TILES = 6;
+const PREVIEW_NOTE = 'Only you can see this (unless you’re sharing your whole screen).';
+
+export const sizeText = (n) => (!(n > 0) ? '' : n < 1024 ? `${n} bytes` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
 export function createTileStrip({ mount, records, hide, tileHost = null, h, nameOf = () => 'Someone', isHost = () => false,
   onCloseForEveryone = () => {}, onNote = () => {} }) {
-  const entries = new Map();      // uri → { uri, cid, by, el, body, title, state, attempt }
+  const entries = new Map();      // uri → { uri, cid, by, private, el, … }
   const dismissed = new Set();    // `${uri} ${cid}` this person hid
 
   const setState = (e, state, text) => {
@@ -22,19 +31,52 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     e.el.dataset.state = state;
     if (text !== undefined) e.status.textContent = text;
     e.status.hidden = state === 'open';
+    paintButtons(e);
   };
 
   function card(t) {
     const title = h('span', { class: 'rl-tile-name' }, 'A tile');
-    const by = h('span', { class: 'rl-tile-by' }, `opened by ${nameOf(t.by)}`);
+    const author = h('span', { class: 'rl-tile-author' });
+    const size = h('span', { class: 'rl-tile-size' });
+    const desc = h('p', { class: 'rl-tile-desc' });
+    const byEl = h('span', { class: 'rl-tile-by' }, t.private ? '' : `opened by ${nameOf(t.by)}`);
     const status = h('p', { class: 'rl-tile-status', role: 'status' }, 'Checking the tile…');
     const body = h('div', { class: 'rl-tile-body' });
-    const close = h('button', { type: 'button', class: 'rl-tile-close rl-danger', hidden: !isHost(), onclick: () => onCloseForEveryone(t.uri) }, 'Close for everyone');
-    const hideBtn = h('button', { type: 'button', class: 'rl-tile-hide', onclick: () => { dismissed.add(`${t.uri} ${t.cid}`); remove(t.uri); } }, 'Hide for me');
+    const actions = h('span', { class: 'rl-tile-actions' });
+    const notice = h('p', { class: 'rl-tile-private' }, PREVIEW_NOTE);
+    const note = h('p', { class: 'rl-tile-note', role: 'status' });
     const el = h('li', { class: 'rl-tile', 'data-uri': t.uri },
-      h('div', { class: 'rl-tile-head' }, title, by, h('span', { class: 'rl-tile-actions' }, hideBtn, close)),
-      status, body);
-    return { el, title, by, status, body, close };
+      h('div', { class: 'rl-tile-head' }, h('span', { class: 'rl-tile-who' }, title, author, size, byEl), actions),
+      notice, desc, status, note, body);
+    return { el, title, author, size, desc, byEl, status, body, actions, notice, note };
+  }
+
+  // The buttons on a card: a preview's come from the room page; a shared tile's are Hide for me and the
+  // host's Close for everyone. A preview's buttons marked `needsOpen` wait until the tile is running.
+  function sharedButtons(e) {
+    return [
+      { text: 'Hide for me', cls: 'rl-tile-hide', onclick: () => { dismissed.add(`${e.uri} ${e.cid}`); remove(e.uri); } },
+      { text: 'Close for everyone', cls: 'rl-tile-close rl-danger', hidden: () => !isHost(), onclick: () => onCloseForEveryone(e.uri) },
+    ];
+  }
+  function setButtons(e, list) {
+    e.buttons = list.map((b) => ({ ...b, el: h('button', { type: 'button', class: b.cls || '', onclick: () => b.onclick(e) }, b.text) }));
+    e.actions.replaceChildren(...e.buttons.map((b) => b.el));
+    paintButtons(e);
+  }
+  function paintButtons(e) {
+    for (const b of e.buttons || []) {
+      b.el.hidden = !!b.hidden?.();
+      b.el.disabled = (b.needsOpen && e.state !== 'open') || !!b.disabled?.();
+    }
+  }
+
+  function describe(e, rec) {
+    e.title.textContent = rec.name;
+    e.author.textContent = `by ${rec.did}`;
+    e.author.title = rec.did;
+    records.checkedHandle?.(rec.did).then((handle) => { if (handle && entries.get(e.uri) === e) e.author.textContent = `by @${handle}`; });
+    if (e.private) { e.size.textContent = sizeText(rec.declaredBytes); e.desc.textContent = rec.description; }
   }
 
   async function open(e) {
@@ -50,11 +92,15 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     const rec = await records.read(e.uri);
     if (!alive()) return;
     if (!rec.ok) return setState(e, 'failed', rec.why);
-    e.title.textContent = rec.name;
-    if (rec.cid !== e.cid) {
-      onNote(`"${rec.name}" changed since it was opened for everyone: not shown`);
-      return setState(e, 'changed', 'This tile has changed since it was opened for everyone, so it isn’t shown here (everyone runs the same version).');
+    describe(e, rec);
+    if (e.cid && rec.cid !== e.cid) {
+      onNote(`"${rec.name}" changed since it was ${e.private ? 'asked for' : 'opened for everyone'}: not shown`);
+      return setState(e, 'changed', e.private
+        ? 'This tile has changed since it was asked for, so it isn’t shown (ask again for the new version).'
+        : 'This tile has changed since it was opened for everyone, so it isn’t shown here (everyone runs the same version).');
     }
+    e.cid = rec.cid;                      // a preview pins the version it read: that's what gets sent
+    e.rec = rec;
     if (!tileHost) return setState(e, 'no-loader', 'This page can’t open tiles (it has no tile loader).');
     setState(e, 'loading', 'Opening the tile…');
     const loader = records.pathLoader({
@@ -77,16 +123,46 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     e.body.replaceChildren(frame);
   }
 
+  function add(t) {
+    const parts = card(t);
+    const e = { uri: t.uri, cid: t.cid || null, by: t.by || null, private: !!t.private, ...parts, state: 'new', attempt: 0, rec: null };
+    entries.set(t.uri, e);
+    e.el.classList.toggle('rl-tile-preview', e.private);
+    e.notice.hidden = !e.private;
+    setButtons(e, e.private ? t.buttons : sharedButtons(e));
+    mount.prepend(e.el);                 // newest first
+    open(e);
+    return e;
+  }
+
+  // A preview becomes an ordinary card, in place: the same element, the same frame, still running.
+  function promote(e, t) {
+    e.private = false;
+    e.by = t.by;
+    e.el.classList.remove('rl-tile-preview');
+    e.notice.hidden = true;
+    e.note.textContent = '';
+    e.size.textContent = '';
+    e.desc.textContent = '';
+    e.byEl.textContent = `opened by ${nameOf(t.by)}`;
+    setButtons(e, sharedButtons(e));
+  }
+
   function show(t) {
     if (dismissed.has(`${t.uri} ${t.cid}`)) return;
     const had = entries.get(t.uri);
-    if (had && had.cid === t.cid) return;
+    if (had && had.private && had.cid === t.cid && had.state !== 'changed') return promote(had, t);
+    if (had && !had.private && had.cid === t.cid) return;
     if (had) remove(t.uri);
-    const parts = card(t);
-    const e = { uri: t.uri, cid: t.cid, by: t.by, ...parts, state: 'new', attempt: 0 };
-    entries.set(t.uri, e);
-    mount.prepend(e.el);                 // newest first
-    open(e);
+    add(t);
+  }
+
+  /** A private preview: the same checks, the tile running only here. `buttons`: [{ text, cls, onclick(e),
+   *  needsOpen?, disabled?(), hidden?() }]. `cid`: the version it must be (when approving someone's request). */
+  function preview(uri, { buttons = [], cid = null } = {}) {
+    for (const e of [...entries.values()]) if (e.private) remove(e.uri);       // one preview at a time
+    if (entries.has(uri)) return null;                                          // already open for everyone
+    return add({ uri, cid, private: true, buttons });
   }
 
   function remove(uri) {
@@ -98,12 +174,17 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
   }
 
   return {
-    show, remove,
-    /** The host's Close buttons follow who's host. */
-    refresh() { for (const e of entries.values()) e.close.hidden = !isHost(); },
+    show, preview, remove,
+    /** The buttons follow who's host, who's asking, and whether the tile is running. */
+    refresh() { for (const e of entries.values()) paintButtons(e); },
+    /** A line under a preview's status ("Asked the host…"). */
+    noteOn(uri, text) { const e = entries.get(uri); if (e?.private) e.note.textContent = text; },
+    previewOf(uri) { const e = entries.get(uri); return e?.private ? { cid: e.cid, state: e.state, rec: e.rec } : null; },
+    removePreview(uri) { if (entries.get(uri)?.private) remove(uri); },
     has: (uri) => entries.has(uri),
+    isShared: (uri) => !!entries.get(uri) && !entries.get(uri).private,
     state: (uri) => entries.get(uri)?.state ?? null,
-    get size() { return entries.size; },
+    get size() { return [...entries.values()].filter((e) => !e.private).length; },
     clear() { for (const uri of [...entries.keys()]) remove(uri); },
   };
 }
