@@ -1,0 +1,49 @@
+# The Rooms lab relay on Fly.io (rooms-lab-plan.md, R4). Modelled on Daisy's relay (C:\thunderbird-cafe\daisy-relay).
+#
+# DEPLOY WITH:   fly deploy --ha=false
+# Fly's default is TWO machines on a first deploy. The rooms live in one process's memory, so with two
+# machines the people in one room could land on different machines and never meet. After deploying, run
+# `fly status`: there must be exactly ONE machine. If two: `fly scale count 1`.
+#
+# The app name is separate from the public address, relay.rooms.thunderbird.cafe (a CNAME at Wix to
+# thunderbird-rooms-relay.fly.dev, plus `fly certs add relay.rooms.thunderbird.cafe`). App names are global;
+# if this one is taken, pick another here and in the commands.
+app = 'thunderbird-rooms-relay'
+primary_region = 'sjc'
+
+[build]
+
+[env]
+  PORT = '8080'
+  # Pages allowed to use the relay (comma-separated): the lab page on thunderbird.cafe and the site's local
+  # dev server (http://127.0.0.1:4321), so the lab can be tried against the real relay from `npm run dev`.
+  # Raku's origin is added when rooms move there. The origin check is a courtesy, not a lock.
+  ALLOWED_ORIGINS = 'https://thunderbird.cafe,http://127.0.0.1:4321'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Sleeps when idle (owner, Oct 23: R4): no machine runs while nobody is connected, and the first page
+  # wakes it (a second or two; the page keeps retrying). Fly stops it only when no connection is open: an
+  # open WebSocket counts (concurrency by connections, below), so a room in use keeps it awake. A stop
+  # empties the rooms, which is fine: nobody is in one. Part of the Dec 18 2026 review of the Fly apps.
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = 'connections'
+    soft_limit = 250
+    hard_limit = 300
+
+  [[http_service.checks]]
+    grace_period = '5s'
+    interval = '30s'
+    method = 'GET'
+    path = '/health'
+    timeout = '3s'
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
