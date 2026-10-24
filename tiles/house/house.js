@@ -5,9 +5,10 @@
 // sends that state again.
 //
 //   page → house   { kind: "ping" }  { kind: "state", host, presenter, peers }  { kind: "wish", id, by, wish, target?, uri? }
-//   house → page   { kind: "hello", rules }  { kind: "pong" }  { kind: "rule", id, decision, reason }
+//   house → page   { kind: "hello", rules, wishes }  { kind: "pong" }  { kind: "rule", id, decision, reason }
+//                  (wishes: the requests this house decides; the page decides any other itself)
 import { connect } from './talk.js';
-import { decide, RULE_SET } from './rules.js';
+import { decide, RULE_SET, WISHES } from './rules.js';
 
 let state = null;
 
@@ -25,7 +26,7 @@ function showCard() {
 
 const talk = await connect(onMessage);
 if (talk.via === 'none') showCard(); else setTimeout(showCard, ALONE_MS);
-talk.send('hello', { rules: RULE_SET });
+talk.send('hello', { rules: RULE_SET, wishes: WISHES });
 
 function onMessage(p) {
   if (p.kind === 'ping') return talk.send('pong');

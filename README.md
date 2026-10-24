@@ -33,6 +33,13 @@ framework, which Raku can import as they are.
 5. **Live** (`site/`, `scripts/copy-to-site.mjs`): the page on thunderbird.cafe, a hidden page at
    https://thunderbird.cafe/webtiles/rooms-lab/, with the published house tile pinned and the relay on
    Fly.io. The steps are below ("Going live").
+6. **Live tiles** (`src/live.js`, `tiles/poll/`): a tile opened for everyone can be **shared live with the
+   room**: its copies then send each other what people do in them (a vote, a move). It's the "sync between
+   tile instances in a chat" that the Web Tiles spec plans, tried early, as a capability the room grants;
+   it follows the model webxdc apps use (copies of one app talking inside a chat), not webxdc's format. The
+   host turns it on per tile ("Share live with the room"; a guest can "Ask to share live"), the house
+   decides as for any request, and every card says "Shared live with the room". The first live tile is a
+   **live poll** (`tiles/poll/`). See "Live tiles: how a tile talks to its other copies" below.
 
 ## Try it on this computer
 
@@ -85,6 +92,41 @@ After changing the page here: run `copy-to-site.mjs` again and push the site. Af
 `node scripts/publish.mjs --again`, then `copy-to-site.mjs`, then push (the live page loads only the pinned
 version; delete the old house record in PDSls once the new page is live).
 
+## Live tiles: how a tile talks to its other copies
+
+Any tile can take part; nothing in its record changes. It talks with the page that holds it through
+postMessage, under the tiles protocols' names (like `data.js`), version 1:
+
+```
+tile → page  { action: "tiles-protocol-up-live-payload",   payload: { v: 1, kind: "hello" } }
+             { action: "tiles-protocol-up-live-payload",   payload: { v: 1, kind: "send", data } }
+page → tile  { action: "tiles-protocol-down-live-payload", payload: { v: 1, kind: "presence", you, here, joined? } }
+             { action: "tiles-protocol-down-live-payload", payload: { v: 1, kind: "message", n, from, data } }
+             { action: "tiles-protocol-down-live-payload", payload: { v: 1, kind: "paused" | "resumed" } }
+             { action: "tiles-protocol-down-live-payload", payload: { v: 1, kind: "limit", reason } }
+```
+
+- **hello**: "I speak live". The page answers with `presence`: your copy's id (`you`), the ids here
+  (`here`), and who just came in or back (`joined`). Not shared live, `here` is just you, and your own
+  messages come straight back: a room of one. The host's card shows "Share live with the room" only for a
+  tile that has said hello.
+- **send**: plain JSON, at most 16 KB, at most 10 a second (bursts of 30). Every copy, yours included, gets
+  it as a `message`, numbered `n` in the room's one order, with `from` the sender's copy id. Copies that
+  apply the same messages in the same order agree.
+- **Ids** are random: one per person, per tile, per room. Never a name, handle or DID.
+- **Catching up newcomers is the tile's job**: a copy that has been live sends its state when someone joins;
+  a copy that just arrived waits a moment for it (the live poll shows one way).
+- **paused / resumed**: the host's page is gone for a moment (and back). **limit**: your message didn't go
+  out (`size`, `json`, `rate`, `room`, `paused` or `connection`).
+- Outside a room (Raku, a gallery, a viewer) nobody answers: `tiles/poll/live-talk.js` plays the room of
+  one after a moment, so the same tile works alone. **Copy that file into your tile** to make it live.
+
+How the room carries it (`src/live.js`): only copies of the same pinned tile (address and record CID) talk.
+Every message goes to the host's page, which checks it, numbers it and sends it to every copy; each
+receiving page checks it again (from the host's page, a live tile, size and rate). Messages travel only over
+the direct, encrypted connections between the computers (WebRTC data channels), never through the relay,
+and nothing is kept: when the room ends, they're gone.
+
 ## What's in it
 
 - `src/room-page.js`: the page. The lobby (your name, New room / Join room / Rejoin as host), the stage
@@ -93,7 +135,11 @@ version; delete the old house record in PDSls once the new page is live).
   ("Choose what to share…" / Not now), the host's Remove and End room, and the room's messages (wishes,
   the house's decisions, answers), and the strip of tiles opened for everyone.
 - `src/tile-strip.js`: the strip: each tile checked (hidden? same version?), then opened, newest first;
-  and the private preview, which becomes the card in place when the tile is opened for everyone.
+  and the private preview, which becomes the card in place when the tile is opened for everyone. Live
+  tiles: the switch, "Ask to share live", "Stop sharing live" and the "Shared live with the room" badge.
+- `src/live.js`: live tiles: the envelope, each copy's id, the hub on the host's page (one order, the
+  limits: 16 KB a message, 10 a second per copy, 60 a second and 128 KB a second for the whole room), the
+  checks on every receiving page, paused and resumed.
 - `src/tile-records.js`: a tile's record from its author's server (did:plc or did:web), and a file loader
   pinned to that record (every file checked by its content address; at most 50 MB a tile); the author's
   handle, shown only when it points back to the same account.
@@ -101,10 +147,19 @@ version; delete the old house record in PDSls once the new page is live).
   moderation, the same checks as Raku's (it never says which, or why).
 - `src/house-bridge.js`: the host's page holding the house tile: fixed rules for what passes between them,
   and the fallback ("the host approves each request") when there's no house or it doesn't answer.
-- `tiles/house/`: the house tile (`rules.js` holds the room's rules: "the host approves"). It runs only on
-  the host's page, hidden. Opened on its own it shows its card. `scripts/make-card-art.py` draws its
-  pictures; `scripts/publish.mjs` publishes it from thunderbird.cafe (step 5; it asks for the app password
-  itself, hidden; `--dry-run`, `--again`) and writes `published.json`.
+- `tiles/house/`: the house tile (`rules.js` holds the room's rules: "the host approves", now including
+  live sharing: the host's own goes ahead, a guest's goes to the host). Its hello lists the requests it
+  decides; the page decides any other itself, the same way. It runs only on the host's page, hidden. Opened
+  on its own it shows its card.
+- `tiles/poll/`: the live poll. Ask a question (or pick a ready-made one, `ready.js`); everyone votes, one
+  vote each that you can change; the results update live. The first to ask owns the poll (only they close
+  it or start a new one, unless they've left). `poll-state.js` is its logic (tested in Node); `live-talk.js`
+  is the part any tile can copy.
+- `scripts/make-card-art.py` draws the tiles' card pictures (`python3 scripts/make-card-art.py poll`);
+  `scripts/publish.mjs` publishes the tiles from thunderbird.cafe (it asks for the app password itself,
+  hidden): `node scripts/publish.mjs` publishes what isn't published yet, `node scripts/publish.mjs poll` only
+  that one, `--dry-run` shows what it would do, `--again house` publishes that tile again as a new record.
+  It writes `published.json`.
 - `src/room-link.js`: the connection to the relay (joining, reconnecting, the host key, a relay restart).
 - `src/mesh.js`: the direct connections between the computers (WebRTC), one to each other person.
 - `src/levels.js`: who's talking (measured on each computer; nothing sent).
@@ -123,7 +178,9 @@ version; delete the old house record in PDSls once the new page is live).
   Playwright, which this folder doesn't install (it runs in the chat sandbox). `test/browser/check_site.mjs`
   checks the page the site's way: the house published (to a stand-in server) and pinned by
   `copy-to-site.mjs`, the site's entry point bundled with the real tile loader, the page's security policy,
-  and the house and a tile running through a replica of the tile loading server (`test/loader-replica.mjs`).
+  and the house and a tile running through a replica of the tile loading server (`test/loader-replica.mjs`),
+  including the live poll shared live through the real loader. `test/browser/check_live.mjs` runs live
+  tiles across four pages on the dev page (the real poll, every page's relay messages recorded).
 
 ## Consent and privacy
 
@@ -136,7 +193,11 @@ version; delete the old house record in PDSls once the new page is live).
   "you may present" only from the host's page.
 - A tile opened for everyone runs on each person's own computer, in the tile loader's sealed frame, from
   its author's account. Each page checks it itself first, so nobody's page shows a tile Raku would hide,
-  even if another page sends it. What anyone does in their copy stays on their computer.
+  even if another page sends it. What anyone does in their copy stays on their computer, unless the host
+  shares that tile live (every card then says "Shared live with the room").
+- A tile shared live sends what people do in it to the other copies of the same tile only: through the
+  host's page, directly between the computers (encrypted, never through the relay), with random ids
+  instead of names, and nothing is kept.
 - Microphones start off. The browser asks the first time you unmute.
 - Nothing is recorded or stored. Names are typed and not checked.
 - Voice and screens go directly between the computers, encrypted by the browsers. Each computer asks a

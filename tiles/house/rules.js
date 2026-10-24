@@ -13,14 +13,16 @@
 //   - asking to see the host's screen goes straight to the host, whose own prompt is the decision;
 //   - one presenter at a time: while someone presents, nobody can ask to see a screen or to present;
 //   - the host may open a tile for everyone; anyone else asks the host (used from build step 4);
+//   - the host may share a tile live with the room (its copies send each other what people do in them);
+//     anyone else asks the host (live tiles, rooms-live-tiles-plan.md L5);
 //   - nothing is decided while the host is away (their page, and the house with it, is gone anyway).
 //
 // state: { host, presenter, peers: [{ peer, name, host, away? }] }   (from the host's page)
-// wish:  { id, by, wish: "see-screen" | "present" | "open-tile", target?, uri? }   (by: who asks; every message
+// wish:  { id, by, wish: "see-screen" | "present" | "open-tile" | "live", target?, uri? }   (by: who asks; every message
 //        from the page also carries from: "page", the tiles' envelope)
 
 export const RULE_SET = 'host-approves';
-export const WISHES = ['see-screen', 'present', 'open-tile'];
+export const WISHES = ['see-screen', 'present', 'open-tile', 'live'];
 const TILE_URI = /^at:\/\/did:[a-z]+:[A-Za-z0-9._:%-]{1,2000}\/ing\.dasl\.masl\/[A-Za-z0-9._~:-]{1,512}$/;
 
 const answer = (decision, reason) => ({ decision, reason });
@@ -52,6 +54,11 @@ export function decide(state, wish) {
       if (typeof wish.uri !== 'string' || !TILE_URI.test(wish.uri)) return answer('deny', 'That isn’t a tile address.');
       if (byHost) return answer('allow', 'The host may open tiles for everyone.');
       return answer('ask-host', 'The host approves tiles opened for everyone.');
+    }
+    case 'live': {
+      if (typeof wish.uri !== 'string' || !TILE_URI.test(wish.uri)) return answer('deny', 'That isn’t a tile address.');
+      if (byHost) return answer('allow', 'The host may share tiles live.');
+      return answer('ask-host', 'The host approves tiles shared live.');
     }
     default: return answer('deny', 'The house doesn’t know that request.');
   }

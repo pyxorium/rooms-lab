@@ -23,7 +23,7 @@ test('a dry run writes nothing and asks nothing', async () => {
   const pds = createFakePds({ did: ACCOUNT, handle: 'thunderbird.cafe' });
   const r = await run(pds, { dryRun: true, askHidden: async () => { throw new Error('asked'); } });
   assert.equal(r.changed, false);
-  assert.equal(r.plan.length, 1);
+  assert.deepEqual(r.plan.map((t) => t.id), ['house', 'poll']);
   assert.ok(!pds.calls.some((c) => c.includes('uploadBlob') || c.includes('Record')));
 });
 
@@ -58,14 +58,30 @@ test('publishing the house: a Foundry-shaped record, every file read back, pinne
   }
 });
 
-test('published once: nothing to do; --again: a new record (a new address)', async () => {
+test('published once: nothing to do; --again <tile>: a new record for that tile only; --again alone is refused', async () => {
   const pds = createFakePds({ did: ACCOUNT, handle: 'thunderbird.cafe' });
   const first = await run(pds);
   const second = await run(pds, { published: first.published });
   assert.equal(second.changed, false);
-  const again = await run(pds, { published: first.published, again: true });
+  await assert.rejects(run(pds, { published: first.published, again: true }), /Say which tile to publish again/);
+  const again = await run(pds, { published: first.published, again: true, only: ['house'] });
   assert.equal(again.changed, true);
   assert.notEqual(again.published.house.uri, first.published.house.uri);
+  assert.deepEqual(again.published.poll, first.published.poll, 'the poll is left as it was');
+  await assert.rejects(run(pds, { only: ['nope'] }), /no tile called "nope"/);
+});
+
+test('one tile at a time: publishing the poll alone leaves the house as it is', async () => {
+  const pds = createFakePds({ did: ACCOUNT, handle: 'thunderbird.cafe' });
+  const house = { uri: `at://${ACCOUNT}/ing.dasl.masl/3house`, cid: 'bafyreihouse', manifestCid: 'm', publishedAt: 'then' };
+  const r = await run(pds, { published: { account: ACCOUNT, handle: 'thunderbird.cafe', house }, only: ['poll'] });
+  assert.equal(r.changed, true);
+  assert.deepEqual(r.published.house, house);
+  const value = pds.records.get(`ing.dasl.masl/${r.published.poll.uri.split('/').pop()}`).value;
+  assert.equal(value.tile.name, 'Live poll');
+  assert.deepEqual(Object.keys(value.tile.resources).sort(), ['/', '/banner.png', '/icon.png', '/live-talk.js', '/poll-state.js', '/poll.css', '/poll.js', '/ready.js']);
+  assert.match(value.tile.resources['/']['content-security-policy'], /connect-src 'self'/, 'the poll can\'t reach the network');
+  assert.ok(!/thunderbird\.cafe\/webtiles|rooms-lab\//.test(value.tile.description), 'the poll names no address');
 });
 
 test('a wrong password or "no" publishes nothing', async () => {

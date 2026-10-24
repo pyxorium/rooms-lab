@@ -1,5 +1,8 @@
-// tiles.mjs: what goes into the Rooms lab house tile (modelled on daisy-tiles/scripts/tiles.mjs), for
-// publish.mjs (the published record) and, in build step 5, copy-to-site.mjs.
+// tiles.mjs: what goes into the Rooms lab's own tiles (modelled on daisy-tiles/scripts/tiles.mjs), for
+// publish.mjs (the published records) and copy-to-site.mjs (the house, pinned):
+//   house   the room's rules, hidden on the host's page
+//   poll    the live poll (live tiles): a demo tile opened for everyone by its address, then shared live.
+//           It names no address (it also shows up in Raku and the galleries, where it's a poll for one).
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +17,12 @@ export const TILES = {
     description: "The house for a Rooms lab room: it holds the room's rules (who may ask to see someone's screen, who may present, who may open a tile for everyone). The person sharing always decides. It runs hidden on the host's page at thunderbird.cafe/webtiles/rooms-lab/, so on its own there is little to see.",
     sizing: { width: 420, height: 240 },
     files: ['index.html', 'house.css', 'house.js', 'rules.js', 'talk.js'],
+  },
+  poll: {
+    name: 'Live poll',
+    description: 'Ask a question with up to six answers; everyone votes, and the results update as they come in. Shared live in a room, everyone in it votes in the same poll; on its own it’s a poll for one. Its live-talk.js shows how a tile talks to the other copies of itself.',
+    sizing: { width: 480, height: 440 },
+    files: ['index.html', 'poll.css', 'poll.js', 'poll-state.js', 'live-talk.js', 'ready.js'],
   },
 };
 // Card pictures, made by scripts/make-card-art.py.

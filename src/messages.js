@@ -18,6 +18,11 @@
 //   { kind: "tile", uri, cid, by }                 to everyone: open this tile, this exact version (record CID)
 //   { kind: "tiles", list: [{ uri, cid, by }] }    to someone who just came in: the tiles open now
 //   { kind: "tile-close", uri }                    to everyone: the host closed it
+// Live tiles (live.js): turning sharing on and off goes through the relay like the above (the address only);
+// what people do in a live tile goes only over the direct data channels (live.js checks those).
+//   { kind: "wish", id, wish: "live", uri }        to the host: "share this tile live with the room"
+//   { kind: "tile-live", uri, on }                 to everyone, from the host's page only
+//   `tiles` entries carry `live: true` for tiles shared live (a newcomer learns which).
 
 import { TILE_URI, isRecordCid } from './tile-records.js';
 
@@ -25,10 +30,11 @@ const isId = (x) => typeof x === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(x);
 const isPeer = (x) => typeof x === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(x);
 const str = (x, max) => typeof x === 'string' && x.length <= max;
 export const ANSWERS = ['yes', 'no', 'busy', 'already'];
-export const PAGE_WISHES = ['see-screen', 'present', 'open-tile'];
+export const PAGE_WISHES = ['see-screen', 'present', 'open-tile', 'live'];
 export const MAX_TILES = 6;
 const isTileUri = (x) => typeof x === 'string' && x.length <= 2600 && TILE_URI.test(x);
-const readTile = (t) => (t && typeof t === 'object' && isTileUri(t.uri) && isRecordCid(t.cid) && isPeer(t.by) ? { uri: t.uri, cid: t.cid, by: t.by } : null);
+const readTile = (t) => (t && typeof t === 'object' && isTileUri(t.uri) && isRecordCid(t.cid) && isPeer(t.by)
+  ? { uri: t.uri, cid: t.cid, by: t.by, ...(t.live === true ? { live: true } : {}) } : null);
 
 /** The message, cleaned, or null if it isn't one of ours. */
 export function readPeerData(d) {
@@ -60,6 +66,7 @@ export function readPeerData(d) {
         if (!isTileUri(d.uri) || !(d.cid === undefined || isRecordCid(d.cid))) return null;
         return { kind: 'wish', id: d.id, wish: d.wish, uri: d.uri, ...(d.cid ? { cid: d.cid } : {}) };
       }
+      if (d.wish === 'live') return isTileUri(d.uri) ? { kind: 'wish', id: d.id, wish: d.wish, uri: d.uri } : null;
       return { kind: 'wish', id: d.id, wish: d.wish };
     case 'wish-result':
       if (!isId(d.id) || !['allow', 'deny'].includes(d.decision)) return null;
@@ -74,6 +81,7 @@ export function readPeerData(d) {
       return list.every(Boolean) ? { kind: 'tiles', list } : null;
     }
     case 'tile-close': return isTileUri(d.uri) ? { kind: 'tile-close', uri: d.uri } : null;
+    case 'tile-live': return isTileUri(d.uri) && typeof d.on === 'boolean' ? { kind: 'tile-live', uri: d.uri, on: d.on } : null;
     default: return null;
   }
 }

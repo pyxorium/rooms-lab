@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 export const MODULES = ['config.js', 'formats.js', 'room-link.js', 'mesh.js', 'levels.js', 'presenting.js', 'messages.js',
-  'house-bridge.js', 'tile-records.js', 'hide-check.js', 'tile-strip.js', 'room-page.js'];
+  'house-bridge.js', 'tile-records.js', 'hide-check.js', 'tile-strip.js', 'live.js', 'room-page.js'];
 export const SITE_FILES = ['main.js', 'page-csp.js'];
 
 const jsNote = (from) => `// COPY of rooms-lab/${from} (tested there). Edit it there, then run\n// node scripts/copy-to-site.mjs <site folder> in C:\\thunderbird-cafe\\rooms-lab to bring it here.\n\n`;

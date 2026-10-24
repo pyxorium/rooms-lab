@@ -13,9 +13,20 @@ const d = (state, wish) => decide(state, { id: 'w1', ...wish }).decision;
 const why = (state, wish) => decide(state, { id: 'w1', ...wish }).reason;
 const TILE = 'at://did:plc:6vxjigxrqizmbo56gojxico3/ing.dasl.masl/3myfnyphiuw2t';
 
-test('the rule set is named, and knows three wishes', () => {
+test('the rule set is named, and knows four wishes (live since the live-tiles build)', () => {
   assert.equal(RULE_SET, 'host-approves');
-  assert.deepEqual(WISHES, ['see-screen', 'present', 'open-tile']);
+  assert.deepEqual(WISHES, ['see-screen', 'present', 'open-tile', 'live']);
+});
+
+test('live: the host → allowed; a guest → the host approves; only a tile address; not while the host is away', () => {
+  assert.equal(d(room(), { by: H, wish: 'live', uri: TILE }), 'allow');
+  assert.equal(why(room(), { by: H, wish: 'live', uri: TILE }), 'The host may share tiles live.');
+  assert.equal(d(room(), { by: R, wish: 'live', uri: TILE }), 'ask-host');
+  assert.equal(why(room(), { by: R, wish: 'live', uri: TILE }), 'The host approves tiles shared live.');
+  for (const uri of ['https://example.com', `${TILE}/x`, null, undefined]) assert.equal(d(room(), { by: H, wish: 'live', uri }), 'deny', String(uri));
+  const away = room({ peers: [{ peer: H, name: 'Nick', host: true, away: true }, { peer: R, name: 'Robin', host: false }] });
+  assert.equal(d(away, { by: R, wish: 'live', uri: TILE }), 'deny');
+  assert.equal(d(room({ presenter: T }), { by: R, wish: 'live', uri: TILE }), 'ask-host', 'a presenter doesn\'t block live sharing');
 });
 
 test('see-screen: a guest asking about a guest → the host approves; the host asking → allowed; asking about the host → straight to the host\'s own prompt', () => {
@@ -62,7 +73,7 @@ test('nothing is decided for people who aren\'t here, while the host is away, or
 test('unknown wishes are refused; the answer is always allow, deny or ask-host with a reason', () => {
   assert.equal(d(room(), { by: R, wish: 'share-now', target: T }), 'deny');
   assert.equal(d(room(), { by: R }), 'deny');
-  for (const wish of ['see-screen', 'present', 'open-tile', 'x']) for (const by of [H, R, X]) {
+  for (const wish of ['see-screen', 'present', 'open-tile', 'live', 'x']) for (const by of [H, R, X]) {
     const a = decide(room(), { id: 'w', by, wish, target: T, uri: TILE });
     assert.ok(['allow', 'deny', 'ask-host'].includes(a.decision));
     assert.equal(typeof a.reason, 'string');

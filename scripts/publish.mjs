@@ -1,10 +1,12 @@
-// Publishes the Rooms lab house tile from the thunderbird.cafe account (modelled on daisy-tiles'
-// scripts/publish.mjs; no record types of its own to publish). Run from C:\thunderbird-cafe\rooms-lab
-// (Node 22, no packages needed), in build step 5:
+// Publishes the Rooms lab's tiles (the house, the live poll) from the thunderbird.cafe account (modelled on
+// daisy-tiles' scripts/publish.mjs; no record types of its own to publish). Run from
+// C:\thunderbird-cafe\rooms-lab (Node 22, no packages needed):
 //
-//   node scripts/publish.mjs              publish the house if it isn't published yet
-//   node scripts/publish.mjs --dry-run    show what would be published; ask nothing, write nothing
-//   node scripts/publish.mjs --again      publish the house again, as a new record (a new address)
+//   node scripts/publish.mjs                 publish every tile that isn't published yet
+//   node scripts/publish.mjs poll            only that tile (house, poll), if it isn't published yet
+//   node scripts/publish.mjs --dry-run …     show what would be published; ask nothing, write nothing
+//   node scripts/publish.mjs --again house   publish that tile again, as a new record (a new address);
+//                                            --again needs the tile's name, so nothing is republished by accident
 //
 // It shows what will be published, asks for the account's app password (hidden as you type) and once
 // more before writing. The tile is always created as a new record (never overwriting). What was published
@@ -43,7 +45,7 @@ export async function tileToPublish(id) {
   return { id, name: t.name, description: t.description, sizing: t.sizing, generator: GENERATOR, csp: cspOf(page), files };
 }
 
-export async function runPublish({ fetchImpl = fetch, ask, askHidden, log = console.log, dryRun = false, again = false,
+export async function runPublish({ fetchImpl = fetch, ask, askHidden, log = console.log, dryRun = false, again = false, only = [],
   readPublished = () => (existsSync(PUBLISHED_FILE) ? JSON.parse(readFileSync(PUBLISHED_FILE, 'utf8')) : {}),
   writePublished = (o) => writeFileSync(PUBLISHED_FILE, JSON.stringify(o, null, 2) + '\n'),
   now = () => new Date().toISOString() }) {
@@ -54,12 +56,17 @@ export async function runPublish({ fetchImpl = fetch, ask, askHidden, log = cons
   const aka = (doc.alsoKnownAs || []).find((a) => a.startsWith('at://'));
   const handle = aka ? aka.slice(5) : ACCOUNT;
 
+  for (const id of only) if (!TILES[id]) throw new Error(`There's no tile called "${id}" (${Object.keys(TILES).join(', ')}).`);
+  if (again && !only.length) throw new Error(`Say which tile to publish again: --again ${Object.keys(TILES).join(' or --again ')}.`);
   const published = readPublished() || {};
   const todo = [];
-  for (const id of Object.keys(TILES)) if (again || !published[id]) todo.push(await tileToPublish(id));
+  for (const id of Object.keys(TILES)) {
+    if (only.length && !only.includes(id)) continue;
+    if (again || !published[id]) todo.push(await tileToPublish(id));
+  }
 
   log(`\nAccount: @${handle} (${ACCOUNT}), server ${pds}`);
-  if (!todo.length) { log('\nThe house is already published (see published.json). Use --again to publish it as a new record.'); return { changed: false, published }; }
+  if (!todo.length) { log('\nAlready published (see published.json). Use --again <tile> to publish one as a new record.'); return { changed: false, published }; }
   log('\nThis will publish:');
   for (const t of todo) {
     const kb = t.files.reduce((n, f) => n + f.bytes.length, 0) / 1024;
@@ -101,7 +108,7 @@ export async function runPublish({ fetchImpl = fetch, ask, askHidden, log = cons
     writePublished(out);
     log(`  done: ${r.uri}`);
   }
-  log('\nPublished, and read back to check. Next (build step 5): copy-to-site.mjs pins it in the site.');
+  log(`\nPublished, and read back to check.${todo.some((t) => t.id === 'house') ? ' Next: copy-to-site.mjs pins the house in the site.' : ''}`);
   log('Delete this app password (Bluesky: Settings > Privacy and security > App passwords).');
   return { changed: true, published: out };
 }
@@ -119,7 +126,7 @@ function makeAsk() {
 if (process.argv[1] && resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase()) {
   const args = process.argv.slice(2);
   const io = makeAsk();
-  runPublish({ ask: io.ask, askHidden: io.askHidden, dryRun: args.includes('--dry-run'), again: args.includes('--again') })
+  runPublish({ ask: io.ask, askHidden: io.askHidden, dryRun: args.includes('--dry-run'), again: args.includes('--again'), only: args.filter((a) => !a.startsWith('--')) })
     .catch((err) => { console.error(`\n${err.message}`); process.exitCode = 1; })
     .finally(() => io.close());
 }

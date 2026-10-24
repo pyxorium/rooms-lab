@@ -14,6 +14,11 @@
 // page (Open for everyone / Ask… / Allow, Deny; Cancel). When the tile is then opened for everyone at the
 // same version, the preview card becomes that person's ordinary card *in place*: the frame is never moved
 // (a browser reloads a frame that moves), so the tile keeps running and nothing loads twice.
+//
+// Live (live.js): a tile that speaks the live protocol gets, on the host's card, "Share live with the room"
+// (and "Stop sharing live" once it is); on a guest's card, "Ask to share live". Every card of a live tile
+// says "Shared live with the room". The strip tells the room page which frame is which tile (frameOf,
+// uriOfSource) and when a copy is gone (onRemoved).
 import { parseTileUri } from './tile-records.js';
 
 export const MAX_TILES = 6;
@@ -21,8 +26,10 @@ const PREVIEW_NOTE = 'Only you can see this (unless you’re sharing your whole 
 
 export const sizeText = (n) => (!(n > 0) ? '' : n < 1024 ? `${n} bytes` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
+const NO_LIVE = { info: () => ({ spoke: false, live: false, asking: false }), share: () => {}, stop: () => {}, ask: () => {} };
+
 export function createTileStrip({ mount, records, hide, tileHost = null, h, nameOf = () => 'Someone', isHost = () => false,
-  onCloseForEveryone = () => {}, onNote = () => {} }) {
+  onCloseForEveryone = () => {}, onNote = () => {}, live = NO_LIVE, onRemoved = () => {} }) {
   const entries = new Map();      // uri → { uri, cid, by, private, el, … }
   const dismissed = new Set();    // `${uri} ${cid}` this person hid
 
@@ -45,16 +52,23 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     const actions = h('span', { class: 'rl-tile-actions' });
     const notice = h('p', { class: 'rl-tile-private' }, PREVIEW_NOTE);
     const note = h('p', { class: 'rl-tile-note', role: 'status' });
+    const liveBadge = h('p', { class: 'rl-tile-live', hidden: true }, 'Shared live with the room');
     const el = h('li', { class: 'rl-tile', 'data-uri': t.uri },
       h('div', { class: 'rl-tile-head' }, h('span', { class: 'rl-tile-who' }, title, author, size, byEl), actions),
-      notice, desc, status, note, body);
-    return { el, title, author, size, desc, byEl, status, body, actions, notice, note };
+      liveBadge, notice, desc, status, note, body);
+    return { el, title, author, size, desc, byEl, status, body, actions, notice, note, liveBadge };
   }
 
   // The buttons on a card: a preview's come from the room page; a shared tile's are Hide for me and the
   // host's Close for everyone. A preview's buttons marked `needsOpen` wait until the tile is running.
   function sharedButtons(e) {
+    const info = () => live.info(e.uri);
     return [
+      { text: 'Share live with the room', cls: 'rl-primary rl-tile-live-on', hidden: () => !isHost() || !info().spoke || info().live,
+        disabled: () => info().asking, onclick: () => live.share(e.uri) },
+      { text: 'Ask to share live', cls: 'rl-tile-live-ask', hidden: () => isHost() || !info().spoke || info().live,
+        disabled: () => info().asking, onclick: () => live.ask(e.uri) },
+      { text: 'Stop sharing live', cls: 'rl-tile-live-off', hidden: () => !isHost() || !info().live, onclick: () => live.stop(e.uri) },
       { text: 'Hide for me', cls: 'rl-tile-hide', onclick: () => { dismissed.add(`${e.uri} ${e.cid}`); remove(e.uri); } },
       { text: 'Close for everyone', cls: 'rl-tile-close rl-danger', hidden: () => !isHost(), onclick: () => onCloseForEveryone(e.uri) },
     ];
@@ -65,6 +79,8 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     paintButtons(e);
   }
   function paintButtons(e) {
+    e.liveBadge.hidden = e.private || !live.info(e.uri).live;
+    e.el.classList.toggle('rl-tile-is-live', !e.liveBadge.hidden);
     for (const b of e.buttons || []) {
       b.el.hidden = !!b.hidden?.();
       b.el.disabled = (b.needsOpen && e.state !== 'open') || !!b.disabled?.();
@@ -108,7 +124,7 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
       onFile: (path, ok) => {
         if (!alive() || (path !== '/' && path !== '/index.html')) return;
         if (ok) { if (e.state === 'loading') setState(e, 'open'); }
-        else { setState(e, 'failed', 'The tile’s page couldn’t be loaded (or wasn’t the version opened for everyone).'); e.body.replaceChildren(); }
+        else { setState(e, 'failed', 'The tile’s page couldn’t be loaded (or wasn’t the version opened for everyone).'); e.body.replaceChildren(); e.frame = null; }
       },
     });
     const height = Math.max(200, Math.min(700, rec.sizing?.height || 480));
@@ -120,12 +136,13 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     frame.classList.add('rl-tile-frame');
     frame.style.height = `${height}px`;
     frame.title = rec.name;
+    e.frame = frame;
     e.body.replaceChildren(frame);
   }
 
   function add(t) {
     const parts = card(t);
-    const e = { uri: t.uri, cid: t.cid || null, by: t.by || null, private: !!t.private, ...parts, state: 'new', attempt: 0, rec: null };
+    const e = { uri: t.uri, cid: t.cid || null, by: t.by || null, private: !!t.private, ...parts, state: 'new', attempt: 0, rec: null, frame: null };
     entries.set(t.uri, e);
     e.el.classList.toggle('rl-tile-preview', e.private);
     e.notice.hidden = !e.private;
@@ -171,6 +188,8 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     entries.delete(uri);
     e.attempt++;
     e.el.remove();
+    e.frame = null;
+    onRemoved(uri);
   }
 
   return {
@@ -182,6 +201,15 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     previewOf(uri) { const e = entries.get(uri); return e?.private ? { cid: e.cid, state: e.state, rec: e.rec } : null; },
     removePreview(uri) { if (entries.get(uri)?.private) remove(uri); },
     has: (uri) => entries.has(uri),
+    /** The running frame of a tile on this page (a preview's too), or null. */
+    frameOf: (uri) => (entries.get(uri)?.state === 'open' ? entries.get(uri).frame : null),
+    /** Which tile a message came from (its frame's window), or null. */
+    uriOfSource(src) {
+      if (!src) return null;
+      for (const e of entries.values()) if (e.frame && e.state === 'open' && e.frame.contentWindow === src) return e.uri;
+      return null;
+    },
+    name: (uri) => entries.get(uri)?.rec?.name ?? null,
     isShared: (uri) => !!entries.get(uri) && !entries.get(uri).private,
     state: (uri) => entries.get(uri)?.state ?? null,
     get size() { return [...entries.values()].filter((e) => !e.private).length; },

@@ -183,6 +183,30 @@ try {
   assert.equal(await counterButton(robin).textContent(), '2');
   assert.equal(await counterButton(nick).textContent(), '1');
 
+  step('live: the poll (published by publish.mjs) opened for everyone and shared live, through the real loader and the loading server\'s shuttle');
+  const POLL = pub.published.poll.uri;
+  const pollCard = (p) => p.page.locator(`.rl-tile[data-uri="${POLL}"]`);
+  const pollFrame = (p) => pollCard(p).locator('iframe').contentFrame().locator('iframe').contentFrame();
+  const pollStatus = (p, text) => pollFrame(p).locator('#status', { hasText: text }).waitFor({ timeout: 20000 });
+  await nick.page.fill('.rl-tile-input', POLL);
+  await nick.page.click('.rl-tile-preview-go');
+  await until(nick, (u) => document.querySelector(`.rl-tile[data-uri="${u}"]`)?.dataset.state === 'open', POLL);
+  await pollStatus(nick, 'Just you.');
+  await pollCard(nick).locator('.rl-tile-open').click();
+  await until(robin, (u) => document.querySelector(`.rl-tile[data-uri="${u}"]`)?.dataset.state === 'open', POLL);
+  await pollStatus(robin, 'Just you.');
+  await until(nick, (u) => !document.querySelector(`.rl-tile[data-uri="${u}"] .rl-tile-live-on`)?.hidden, POLL);
+  await pollCard(nick).locator('.rl-tile-live-on').click();
+  for (const p of [nick, robin]) await pollStatus(p, 'Live · 2 here');
+  await pollFrame(nick).locator('select').selectOption('1');
+  await pollFrame(nick).locator('button', { hasText: 'Ask' }).click();
+  await pollFrame(robin).locator('.poll h1', { hasText: 'Can you see the shared screen?' }).waitFor({ timeout: 20000 });
+  await pollFrame(robin).locator('.vote').nth(0).click();
+  await pollFrame(nick).locator('.vote').nth(0).click();
+  for (const p of [nick, robin]) await pollFrame(p).locator('.tally', { hasText: '2 votes · 2 here' }).waitFor({ timeout: 20000 });
+  assert.deepEqual(await pollFrame(nick).locator('.count').allTextContents(), ['2', '0', '0']);
+  assert.ok(await nick.page.evaluate(() => window.__roomsLab.room.log.some((l) => /⌂ You: live \("Live poll"\): allow — The host may share tiles live\./.test(l))), 'the published house decided');
+
   step('the page broke none of its own security policy');
   for (const p of [nick, robin]) assert.deepEqual(await p.page.evaluate(() => window.__csp), [], p.name);
 

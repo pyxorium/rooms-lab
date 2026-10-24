@@ -17,9 +17,15 @@
 //   is marked as "detail" (sharp text before smooth motion) by the page.
 // Received tracks are handed to the page (`onTrack(peer, track, stream)`): audio is a person's voice,
 // video is their screen (there's no camera in the lab).
+//
+// The data channel ("room", made by the side that starts; the other side receives it) carries live tiles'
+// messages (live.js), JSON text, directly between the two browsers and encrypted like voice; never through
+// the relay. `sendData(peer, obj)` is true when it went out; what arrives goes to `onData(peer, obj)` (parsed,
+// not yet checked: the page checks it); `onChannel(peer, "open" | "closed")` follows the channel.
 export function createMesh({
   signal, iceServers = [], RTCPeerConnectionImpl = globalThis.RTCPeerConnection,
   onTrack = () => {}, onPeerState = () => {}, onError = () => {}, leaveGraceMs = 15_000,
+  onData = () => {}, onChannel = () => {}, maxDataBytes = 64 * 1024,
 }) {
   let self = null;
   const peers = new Map();         // peer id → { pc, polite, makingOffer, ignoreOffer, chain, senders: { mic, screen }, channel }
@@ -44,11 +50,25 @@ export function createMesh({
       onPeerState(id, pc.connectionState);
       if (pc.connectionState === 'failed' && !p.polite) { try { pc.restartIce(); } catch { /* old browser */ } }
     };
-    if (!p.polite) p.channel = pc.createDataChannel('room');
+    if (!p.polite) useChannel(id, p, pc.createDataChannel('room'));
+    pc.ondatachannel = ({ channel }) => { if (channel.label === 'room' && peers.get(id) === p) useChannel(id, p, channel); };
     if (mic) p.senders.mic = pc.addTrack(mic, micStream);
     if (screen) addScreen(p);
     onPeerState(id, 'new');
     return p;
+  }
+
+  function useChannel(id, p, ch) {
+    p.channel = ch;
+    ch.onopen = () => { if (p.channel === ch) onChannel(id, 'open'); };
+    ch.onclose = () => { if (p.channel === ch) onChannel(id, 'closed'); };
+    ch.onmessage = (e) => {
+      if (p.channel !== ch || typeof e.data !== 'string' || e.data.length > maxDataBytes) return;
+      let obj;
+      try { obj = JSON.parse(e.data); } catch { return; }
+      onData(id, obj);
+    };
+    if (ch.readyState === 'open') onChannel(id, 'open');
   }
 
   function addScreen(p) {
@@ -132,6 +152,16 @@ export function createMesh({
       }
     },
     state: (id) => peers.get(id)?.pc.connectionState ?? null,
+    /** Send JSON to one person over the data channel: true if it went out. */
+    sendData(id, obj) {
+      const ch = peers.get(id)?.channel;
+      if (!ch || ch.readyState !== 'open') return false;
+      let text;
+      try { text = JSON.stringify(obj); } catch { return false; }
+      if (text.length > maxDataBytes) return false;
+      try { ch.send(text); return true; } catch { return false; }
+    },
+    channelOpen: (id) => peers.get(id)?.channel?.readyState === 'open',
     close() { for (const id of [...peers.keys()]) drop(id); known = new Set(); },
     // For the checks.
     connection: (id) => peers.get(id)?.pc ?? null,

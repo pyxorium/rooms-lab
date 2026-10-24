@@ -3,7 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHouseBridge, readFromHouse, fallbackRule, UP, DOWN } from '../src/house-bridge.js';
-import { decide } from '../tiles/house/rules.js';
+import { decide, WISHES } from '../tiles/house/rules.js';
+const TILE = 'at://did:plc:6vxjigxrqizmbo56gojxico3/ing.dasl.masl/3myfnyphiuw2t';
 
 const STATE = { host: 'host-peer-1', presenter: null, peers: [{ peer: 'host-peer-1', name: 'Nick', host: true }, { peer: 'robin-peer-1', name: 'Robin', host: false }, { peer: 'ted-peer-11', name: 'Ted', host: false }] };
 const env = (kind, extra = {}) => ({ game: 'rooms', v: 1, kind, ...extra });
@@ -41,9 +42,12 @@ test('the house says hello, gets the room\'s state, and decides with its own rul
   const b = createHouseBridge({ makeFrame: async () => s.frame, win: s.win, onLog });
   await b.start();
   assert.equal(b.status, 'loading');
-  s.reply(env('hello', { rules: 'host-approves' }));
+  s.reply(env('hello', { rules: 'host-approves', wishes: WISHES }));
   assert.equal(b.status, 'ready');
   assert.equal(b.rules, 'host-approves');
+  assert.deepEqual(b.wishes, ['see-screen', 'present', 'open-tile', 'live']);
+  const live = await b.decide(STATE, { by: 'robin-peer-1', wish: 'live', uri: TILE });
+  assert.deepEqual(live, { decision: 'ask-host', reason: 'The host approves tiles shared live.', by: 'house' });
   const a = await b.decide(STATE, { by: 'robin-peer-1', wish: 'see-screen', target: 'ted-peer-11' });
   assert.deepEqual(a, { decision: 'ask-host', reason: 'The host approves screen requests.', by: 'house' });
   const wishMsg = s.sent.find((m) => m.payload.kind === 'wish');
@@ -125,4 +129,26 @@ test('too many messages from the house are dropped', async () => {
   for (let i = 0; i < 6; i++) s.reply(env('pong'));
   assert.equal(l.filter((x) => /too many/.test(x)).length, 3);
   b.stop();
+});
+
+test('a house decides only the wishes its hello lists; the first house (no list) knows three, and the page decides live itself', async () => {
+  for (const [hello, liveBy] of [[{ rules: 'host-approves' }, 'page'], [{ rules: 'host-approves', wishes: ['see-screen', 'present', 'open-tile'] }, 'page'], [{ rules: 'host-approves', wishes: WISHES }, 'house']]) {
+    const s = stage((p, reply) => {
+      if (p.from !== 'page') return;
+      if (p.kind === 'wish') reply(env('rule', { id: p.id, ...decide(s.lastState, p) }));
+      if (p.kind === 'state') s.lastState = p;
+    });
+    const b = createHouseBridge({ makeFrame: async () => s.frame, win: s.win });
+    await b.start();
+    s.reply(env('hello', hello));
+    const guest = await b.decide(STATE, { by: 'robin-peer-1', wish: 'live', uri: TILE });
+    const host = await b.decide(STATE, { by: STATE.host, wish: 'live', uri: TILE });
+    assert.equal(guest.by, liveBy, JSON.stringify(hello));
+    assert.equal(guest.decision, 'ask-host', 'a guest asking to share live: the host approves, house or not');
+    assert.equal(host.decision, 'allow', 'the host\'s own: allowed, house or not');
+    if (liveBy === 'page') assert.equal(guest.unknown, true, 'the page says the house doesn\'t decide this one');
+    assert.equal((await b.decide(STATE, { by: 'robin-peer-1', wish: 'present' })).by, 'house', 'the first three still go to the house');
+    b.stop();
+  }
+  assert.deepEqual(readFromHouse(env('hello', { rules: 'x', wishes: ['live', 'BAD!', 42, 'present'] })).wishes, ['live', 'present'], 'odd names dropped');
 });

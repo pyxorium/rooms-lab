@@ -97,3 +97,7 @@
 .rl-tile[data-state="hidden"] .rl-tile-status, .rl-tile[data-state="changed"] .rl-tile-status,
 .rl-tile[data-state="failed"] .rl-tile-status, .rl-tile[data-state="no-loader"] .rl-tile-status { color: var(--rl-warn); }
 .rl-tile-frame { display: block; width: 100%; border: 0; border-radius: 8px; background: #fff; }
+/* Live tiles: the card says so, in the glaze colour, with a small dot. */
+.rl-tile-is-live { border-color: var(--rl-glaze); }
+.rl-tile-live { margin: 0 0 6px; font-size: 13px; color: var(--rl-glaze); font-weight: 600; }
+.rl-tile-live::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--rl-glaze); vertical-align: 1px; }

@@ -14,6 +14,11 @@
 // No house (it didn't load, isn't set up, or doesn't answer in time): the page's own fallback, "the host
 // approves each request" (fallbackRule below). The asker never waits on a stuck tile.
 //
+// Which requests a house decides: it lists them in its hello (`wishes`, live tiles onward). The page asks it
+// only about those, and decides any other request with the same fallback (so a house published before a new
+// kind of request never refuses it just for being new). A house whose hello has no list is the first one
+// (Oct 24): it knows see-screen, present and open-tile.
+//
 // `makeFrame()` gives the house's frame: on the site (build step 5) the tile loader's frame for the pinned
 // house record; on the lab's dev page a sealed (sandboxed) frame of tiles/house/. Either way the house
 // talks with the tiles protocol's data messages, so the bridge listens for those from that frame only.
@@ -25,6 +30,7 @@ export const VERSION = 1;
 export const PAGE_TO_HOUSE = ['ping', 'state', 'wish'];
 export const HOUSE_TO_PAGE = ['hello', 'pong', 'rule'];
 export const DECISIONS = ['allow', 'deny', 'ask-host'];
+export const FIRST_HOUSE_WISHES = Object.freeze(['see-screen', 'present', 'open-tile']);
 export const LIMITS = Object.freeze({ maxBytes: 8 * 1024, burst: 40, perSecond: 20 });
 export const TIMES = Object.freeze({ helloMs: 8000, answerMs: 2500 });
 
@@ -43,7 +49,12 @@ export function readFromHouse(raw, { asked = () => true, limits = LIMITS } = {})
   try { size = JSON.stringify(raw).length; } catch { /* not sendable */ }
   if (size > limits.maxBytes) return { drop: 'too big' };
   if (!HOUSE_TO_PAGE.includes(raw.kind)) return { drop: `the house may not send "${String(raw.kind).slice(0, 30)}"` };
-  if (raw.kind === 'hello') return { kind: 'hello', rules: typeof raw.rules === 'string' ? raw.rules.slice(0, 60) : '' };
+  if (raw.kind === 'hello') {
+    const wishes = Array.isArray(raw.wishes)
+      ? raw.wishes.filter((w) => typeof w === 'string' && /^[a-z-]{1,30}$/.test(w)).slice(0, 20)
+      : [...FIRST_HOUSE_WISHES];
+    return { kind: 'hello', rules: typeof raw.rules === 'string' ? raw.rules.slice(0, 60) : '', wishes };
+  }
   if (raw.kind === 'pong') return { kind: 'pong' };
   // a rule
   if (typeof raw.id !== 'string' || !asked(raw.id)) return { drop: 'a rule for no wish the page asked about' };
@@ -56,7 +67,7 @@ export function createHouseBridge({
   makeFrame = null, mount = null, win = globalThis, times = TIMES, limits = LIMITS, now = () => Date.now(),
   onLog = () => {}, onStatus = () => {},
 }) {
-  let frame = null, status = 'off', rules = '', lastState = '', helloTimer = null, n = 0;
+  let frame = null, status = 'off', rules = '', wishes = [], lastState = '', helloTimer = null, n = 0;
   const pending = new Map();         // our wish id → { resolve, timer }
   const bucket = { tokens: limits.burst, at: now() };
   const allowed = () => {
@@ -86,6 +97,7 @@ export function createHouseBridge({
     if (m.kind === 'hello') {
       clearTimeout(helloTimer);
       rules = m.rules;
+      wishes = m.wishes;
       lastState = '';
       set('ready', { rules });
       onLog('ready', `the house is ready (rules: ${rules || 'unnamed'})`);
@@ -122,6 +134,7 @@ export function createHouseBridge({
     /** The house's decision on a wish ({ by, wish, target?, uri? }; by: who asks), or the page's fallback. */
     decide(state, wish) {
       if (status !== 'ready') return Promise.resolve({ ...fallbackRule(state, wish), by: 'page' });
+      if (!wishes.includes(wish.wish)) return Promise.resolve({ ...fallbackRule(state, wish), by: 'page', unknown: true });
       const id = `w${++n}`;
       return new Promise((resolve) => {
         const timer = setTimeout(() => {
@@ -136,6 +149,8 @@ export function createHouseBridge({
     },
     get status() { return status; },
     get rules() { return rules; },
+    /** The requests the house decides (from its hello). */
+    get wishes() { return [...wishes]; },
     get frame() { return frame; },
     stop() {
       clearTimeout(helloTimer);
