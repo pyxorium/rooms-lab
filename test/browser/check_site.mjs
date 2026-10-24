@@ -199,7 +199,7 @@ try {
   await pollCard(nick).locator('.rl-tile-live-on').click();
   for (const p of [nick, robin]) await pollStatus(p, 'Live · 2 here');
   await pollFrame(nick).locator('select').selectOption('1');
-  await pollFrame(nick).locator('button', { hasText: 'Ask' }).click();
+  await pollFrame(nick).locator('button', { hasText: 'Start poll' }).click();
   await pollFrame(robin).locator('.poll h1', { hasText: 'Can you see the shared screen?' }).waitFor({ timeout: 20000 });
   await pollFrame(robin).locator('.vote').nth(0).click();
   await pollFrame(nick).locator('.vote').nth(0).click();

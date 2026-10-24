@@ -208,7 +208,7 @@ try {
   const rf = await tileFrame(robin, 'poll');
   await rf.selectOption('select', '3');
   assert.equal(await rf.inputValue('#q'), 'Tea or coffee?');
-  await rf.click('button:has-text("Ask")');
+  await rf.click('button:has-text("Start poll")');
   await pollUntil(robin, 'poll', () => document.querySelector('.poll h1')?.textContent === 'Tea or coffee?');
   await vote(robin, 'poll', 1);
   await pollUntil(robin, 'poll', () => document.querySelector('.mine .label')?.textContent === 'Coffee');
@@ -284,7 +284,7 @@ try {
   const tf = await tileFrame(ted, 'poll');
   await tf.click('button:has-text("New poll")');
   await tf.selectOption('select', '0');
-  await tf.click('button:has-text("Ask")');
+  await tf.click('button:has-text("Start poll")');
   for (const p of [nick, ted, zoe]) await pollUntil(p, 'poll', () => document.querySelector('.poll h1')?.textContent === 'How’s the sound?');
   for (const p of [nick, zoe]) assert.deepEqual(await counts(p, 'poll'), [0, 0, 0]);
 
@@ -311,6 +311,7 @@ try {
   await nick.page.click('button:has-text("Rejoin as host")');
   await until(nick, () => window.__roomsLab.room?.link.joined === true);
   await cardState(nick, 'poll', 'open');
+  for (const rk of ['poll', 'counter', 'poll2']) assert.equal(await card(nick, rk).locator('.rl-tile-by').textContent(), 'opened by You', `after his reload, ${rk} is still Nick's own (not "Someone")`);
   for (const p of [nick, ted, zoe]) await pollUntil(p, 'poll', () => document.getElementById('status').textContent === 'Live · 3 here', undefined, 30000);
   await pollUntil(ted, 'poll', () => document.querySelector('.poll h1')?.textContent === 'How’s the sound?');
   await pollUntil(nick, 'poll', () => document.querySelector('.poll h1')?.textContent === 'How’s the sound?', undefined, 10000);

@@ -135,7 +135,7 @@ function form() {
   addRow(); addRow(); addRow();
   // No <form>: a tile runs in a sandboxed frame, where forms can't be submitted (not even to a script).
   const submit = () => ask(q.value, [...list.querySelectorAll('input')].map((i) => i.value).filter((v) => v.trim()));
-  const go = el('button', { type: 'button', class: 'primary', onclick: submit }, 'Ask');
+  const go = el('button', { type: 'button', class: 'primary', onclick: submit }, 'Start poll');
   const cancel = state.poll ? el('button', { type: 'button', onclick: () => { writing = false; render(); } }, 'Cancel') : null;
   q.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
   return el('div', { class: 'ask' }, pick, q, list, el('div', { class: 'row' }, more, el('span', { class: 'grow' }), cancel, go));

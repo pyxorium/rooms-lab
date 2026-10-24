@@ -65,6 +65,7 @@ export const h = (tag, attrs = {}, ...kids) => {
 const NAME_KEY = 'rooms-lab-name';                 // localStorage: your typed name, for next time
 const hostKeyKey = (room) => `rooms-lab-host:${room}`;   // sessionStorage: this tab's host key for a room
 const tilesKey = (room) => `rooms-lab-tiles:${room}`;    // sessionStorage: the host's tiles open for everyone (a reload keeps them)
+const meKey = (room) => `rooms-lab-me:${room}`;          // sessionStorage: this tab's peer id last time (a reload gets a new one)
 
 export const HONEST = [
   'This is a lab: a try-out, not a finished app.',
@@ -297,11 +298,13 @@ export function mountRoomPage(root, options = {}) {
     const r = room;
     if (!r || r.over) return;
     if (state === 'joined') {
+      const before = get(o.session, meKey(r.code));
+      put(o.session, meKey(r.code), d.peer);
       r.host = d.host; r.me = d.peer;
       if (d.host && d.hostKey) put(o.session, hostKeyKey(r.code), d.hostKey);
       if (r.screenTrack) r.link.all({ kind: 'presenting', on: true });      // back after a drop: still presenting
       if (d.host) startHouse(); else stopHouse();
-      if (d.host) hostTilesBack();
+      if (d.host) hostTilesBack(before);
       if (d.host !== r.wasHost) { r.wasHost = d.host; r.live.roleChanged(); }
       else r.live.hostConnected();                   // back after a drop: our live copies rejoin
       r.strip.refresh();
@@ -706,13 +709,20 @@ export function mountRoomPage(root, options = {}) {
     if (t.by === r.me && r.screenTrack) stopShare('Your share stopped: the tile takes over the stage.');
   }
 
-  // The host back after a reload (or a relay restart): the tiles they had open, for everyone again.
-  function hostTilesBack() {
+  // The host back after a reload (or a relay restart): the tiles they had open, for everyone again. A reload
+  // gives this page a new peer id, so tiles it opened under its old one are its own again ("opened by You",
+  // and the host's name on everyone else's page), not "opened by Someone".
+  function hostTilesBack(before = null) {
     const r = room;
     if (!r.roomTiles.length) {
       try { const kept = JSON.parse(get(o.session, tilesKey(r.code)) || '[]'); if (Array.isArray(kept)) r.roomTiles = kept.filter((t) => t && parseTileUri(t.uri) && t.cid).slice(0, MAX_TILES); } catch { /* none */ }
     }
     if (!r.roomTiles.length) return;
+    if (before && before !== r.me) {
+      let mine = false;
+      for (const t of r.roomTiles) if (t.by === before) { t.by = r.me; mine = true; }
+      if (mine) put(o.session, tilesKey(r.code), JSON.stringify(r.roomTiles));
+    }
     r.roomTiles.forEach((t) => { r.strip.show(t); if (t.live) r.live.setLive(t.uri, true); });
     r.link.all({ kind: 'tiles', list: r.roomTiles });
   }
