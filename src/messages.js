@@ -4,14 +4,20 @@
 //   { kind: "rtc", description: { type, sdp } }   setting up the direct connection (to one person)
 //   { kind: "rtc", candidate: { candidate, sdpMid, sdpMLineIndex, usernameFragment } }
 //   { kind: "presenting", on }                     I'm presenting / I've stopped (to everyone)
-//   { kind: "ask-screen", id }                     "can I see your screen?" (to one person)
-//   { kind: "ask-answer", id, answer }             "yes" | "no" | "busy" | "already" (to the asker)
-//
-// (Step 3 puts the house tile between asking and the prompt: these become wishes.)
+// Wishes (build step 3): every wish goes to the host's page, which asks the house tile.
+//   { kind: "wish", id, wish, target? }            to the host: "see-screen" (target: whose) or "present"
+//   { kind: "wish-result", id, decision, reason }  from the host to the asker: "allow" or "deny"
+//   { kind: "ask-screen", id, asker }              from the host to the person whose screen is asked for;
+//                                                  pages take this only from the host
+//   { kind: "go-ahead", id }                       from the host to someone who asked to present
+//   { kind: "ask-answer", id, answer }             the person asked, to the asker: "yes" | "no" | "busy" | "already"
+// None of these makes a page share: sharing always starts from the person's own click, then the picker.
 
 const isId = (x) => typeof x === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(x);
+const isPeer = (x) => typeof x === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(x);
 const str = (x, max) => typeof x === 'string' && x.length <= max;
 export const ANSWERS = ['yes', 'no', 'busy', 'already'];
+export const PAGE_WISHES = ['see-screen', 'present'];         // open-tile comes with the strip (step 4)
 
 /** The message, cleaned, or null if it isn't one of ours. */
 export function readPeerData(d) {
@@ -36,7 +42,15 @@ export function readPeerData(d) {
       return null;
     }
     case 'presenting': return typeof d.on === 'boolean' ? { kind: 'presenting', on: d.on } : null;
-    case 'ask-screen': return isId(d.id) ? { kind: 'ask-screen', id: d.id } : null;
+    case 'wish':
+      if (!isId(d.id) || !PAGE_WISHES.includes(d.wish)) return null;
+      if (d.wish === 'see-screen') return isPeer(d.target) ? { kind: 'wish', id: d.id, wish: d.wish, target: d.target } : null;
+      return { kind: 'wish', id: d.id, wish: d.wish };
+    case 'wish-result':
+      if (!isId(d.id) || !['allow', 'deny'].includes(d.decision)) return null;
+      return { kind: 'wish-result', id: d.id, decision: d.decision, reason: str(d.reason, 200) ? d.reason : '' };
+    case 'ask-screen': return isId(d.id) && isPeer(d.asker) ? { kind: 'ask-screen', id: d.id, asker: d.asker } : null;
+    case 'go-ahead': return isId(d.id) ? { kind: 'go-ahead', id: d.id } : null;
     case 'ask-answer': return isId(d.id) && ANSWERS.includes(d.answer) ? { kind: 'ask-answer', id: d.id, answer: d.answer } : null;
     default: return null;
   }

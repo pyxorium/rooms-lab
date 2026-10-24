@@ -12,8 +12,19 @@
   <div id="room"></div>
   <script type="module">
     import { mountRoomPage } from '/src/room-page.js';
+    // The house tile, for the host's page: here a sealed frame of tiles/house/ (no origin of its own, no
+    // way out but messages to this page). On the site the tile loader gives the pinned, published house.
+    // ?house=off tries a room with no house (the host approves each request).
+    const noHouse = new URLSearchParams(location.search).get('house') === 'off';
+    const loadHouse = noHouse ? null : async () => {
+      const f = document.createElement('iframe');
+      f.setAttribute('sandbox', 'allow-scripts');
+      f.title = 'The house (the room’s rules)';
+      f.src = '/tiles/house/index.html';
+      return f;
+    };
     // For the checks and the console: window.__roomsLab.room is what the page knows right now.
-    window.__roomsLab = mountRoomPage(document.getElementById('room'));
+    window.__roomsLab = mountRoomPage(document.getElementById('room'), { loadHouse });
   </script>
 </body>
 </html>

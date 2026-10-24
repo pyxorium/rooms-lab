@@ -69,3 +69,9 @@
   .rl { padding: 12px; }
   .rl-person-actions { margin-left: 0; width: 100%; }
 }
+/* Step 3: the host's approvals and the house line. */
+.rl-approvals { display: grid; gap: 8px; margin: 8px 0; }
+.rl-approval { border: 2px solid var(--rl-warn); background: var(--rl-panel); border-radius: 10px; padding: 12px 14px; }
+.rl-house-line { color: var(--rl-muted); font-size: 13px; margin: 8px 0 0; }
+.rl-house-line[data-house="off"], .rl-house-line[data-house="failed"] { color: var(--rl-warn); }
+.rl-house { display: none; }

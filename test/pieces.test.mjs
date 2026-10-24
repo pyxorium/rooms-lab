@@ -70,10 +70,20 @@ test('what other pages send is checked: known kinds only, sizes limited, extra f
   assert.equal(readPeerData({ kind: 'rtc', candidate: { candidate: 7 } }), null);
   assert.deepEqual(readPeerData({ kind: 'presenting', on: true }), { kind: 'presenting', on: true });
   assert.equal(readPeerData({ kind: 'presenting', on: 'yes' }), null);
-  assert.deepEqual(readPeerData({ kind: 'ask-screen', id: 'abc123' }), { kind: 'ask-screen', id: 'abc123' });
-  assert.equal(readPeerData({ kind: 'ask-screen', id: '<script>' }), null);
+  assert.deepEqual(readPeerData({ kind: 'ask-screen', id: 'abc123', asker: 'robin-peer-1' }), { kind: 'ask-screen', id: 'abc123', asker: 'robin-peer-1' });
+  assert.equal(readPeerData({ kind: 'ask-screen', id: 'abc123' }), null, 'an ask names its asker (step 3)');
+  assert.equal(readPeerData({ kind: 'ask-screen', id: '<script>', asker: 'robin-peer-1' }), null);
   assert.deepEqual(readPeerData({ kind: 'ask-answer', id: 'abc', answer: 'no' }), { kind: 'ask-answer', id: 'abc', answer: 'no' });
   assert.equal(readPeerData({ kind: 'ask-answer', id: 'abc', answer: 'whatever' }), null);
+  // wishes (step 3): to the host, and the host's answers
+  assert.deepEqual(readPeerData({ kind: 'wish', id: 'abc', wish: 'see-screen', target: 'ted-peer-11', x: 1 }), { kind: 'wish', id: 'abc', wish: 'see-screen', target: 'ted-peer-11' });
+  assert.deepEqual(readPeerData({ kind: 'wish', id: 'abc', wish: 'present', target: 'ignored-peer' }), { kind: 'wish', id: 'abc', wish: 'present' });
+  assert.equal(readPeerData({ kind: 'wish', id: 'abc', wish: 'see-screen' }), null, 'see-screen names whose');
+  assert.equal(readPeerData({ kind: 'wish', id: 'abc', wish: 'open-tile', uri: 'at://x' }), null, 'open-tile comes in step 4');
+  assert.deepEqual(readPeerData({ kind: 'wish-result', id: 'abc', decision: 'deny', reason: 'The host said no.' }), { kind: 'wish-result', id: 'abc', decision: 'deny', reason: 'The host said no.' });
+  assert.equal(readPeerData({ kind: 'wish-result', id: 'abc', decision: 'ask-host' }), null, 'askers only hear allow or deny');
+  assert.equal(readPeerData({ kind: 'wish-result', id: 'abc', decision: 'deny', reason: 'x'.repeat(201) }).reason, '');
+  assert.deepEqual(readPeerData({ kind: 'go-ahead', id: 'abc' }), { kind: 'go-ahead', id: 'abc' });
   // nothing can ask a page to share its screen: there's no such message
   assert.equal(readPeerData({ kind: 'share-now' }), null);
   for (const x of [null, 1, 'x', [], { kind: 'unknown' }]) assert.equal(readPeerData(x), null);

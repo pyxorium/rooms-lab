@@ -4,7 +4,9 @@
 // this dev page, and serves the lab's files at http://127.0.0.1:5190/. Open http://127.0.0.1:5190/ in two
 // windows (or two browsers) to try a room on one computer. Needs `npm install` once in relay\ (for `ws`).
 //
-// Only files under this folder's src\ and dev\ are served, and only to this computer.
+// Only files under this folder's src\, dev\ and tiles\ are served, and only to this computer. The house tile
+// (tiles\house\) runs in a sealed frame (no origin of its own), so its files are served to any page
+// (Access-Control-Allow-Origin: *), as the tile loading server does for tiles.
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -19,11 +21,12 @@ export async function startDev({ port = 5190, relayPort = 8787, host = '127.0.0.
     const p = decodeURIComponent((req.url || '/').split('?')[0]);
     const rel = p === '/' ? 'dev/index.html' : p.replace(/^\/+/, '');
     const full = path.resolve(ROOT, rel);
-    const inside = ['src', 'dev'].some((d) => full.startsWith(path.join(ROOT, d) + path.sep));
+    const inside = ['src', 'dev', 'tiles'].some((d) => full.startsWith(path.join(ROOT, d) + path.sep));
+    const tile = full.startsWith(path.join(ROOT, 'tiles') + path.sep);
     if (req.method !== 'GET' || !inside || full.endsWith('.mjs')) { res.writeHead(404); res.end('not found'); return; }
     try {
       const body = await readFile(full);
-      res.writeHead(200, { 'content-type': TYPES[path.extname(full)] || 'application/octet-stream', 'cache-control': 'no-store' });
+      res.writeHead(200, { 'content-type': TYPES[path.extname(full)] || 'application/octet-stream', 'cache-control': 'no-store', ...(tile ? { 'access-control-allow-origin': '*' } : {}) });
       res.end(body);
     } catch { res.writeHead(404); res.end('not found'); }
   });
