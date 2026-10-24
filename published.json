@@ -1,0 +1,10 @@
+{
+  "account": "did:plc:6vxjigxrqizmbo56gojxico3",
+  "handle": "thunderbird.cafe",
+  "house": {
+    "uri": "at://did:plc:6vxjigxrqizmbo56gojxico3/ing.dasl.masl/3mylumvep4r2b",
+    "cid": "bafyreibwt44dgseqngksrq4s4m5wykrgr3wmgsxoyu5kmrkfu2ynwf26oe",
+    "manifestCid": "bafyreieu7lonwjtyjirannvwsddwreieamm6lgmykyctxvk5727u7ufpxq",
+    "publishedAt": "2026-10-24T04:36:58.734Z"
+  }
+}
