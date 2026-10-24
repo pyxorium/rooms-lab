@@ -14,7 +14,7 @@ framework, which Raku can import as they are.
 3. **The house tile and wishes** (`tiles/house/`, `src/house-bridge.js`): done. Every request ("Ask to see
    screen", "Share my screen") goes to the host's page, which asks the house tile; the house answers allow,
    deny or "ask the host"; then the person sharing still decides, in their own prompt and the browser's
-   picker. Not published yet (step 5).
+   picker.
 4. **Open a tile for everyone** (`src/tile-strip.js`, `src/tile-records.js`, `src/hide-check.js`): done.
    Anyone pastes a tile's address; the host opens it, or the house sends a guest's request to the host
    ("Ask to open for everyone"). The host's page reads the tile's record once and sends its address and
@@ -30,7 +30,9 @@ framework, which Raku can import as they are.
    Allow or Deny from the preview. What's sent is the version previewed (a request carries its CID, and the
    host's page refuses a newer one), and the preview becomes your card in place: the same frame, still
    running, so nothing loads twice and what you did in it stays.
-5. Live: the house tile published, the relay deployed, the page on thunderbird.cafe.
+5. **Live** (`site/`, `scripts/copy-to-site.mjs`): the page on thunderbird.cafe, a hidden page at
+   https://thunderbird.cafe/webtiles/rooms-lab/, with the published house tile pinned and the relay on
+   Fly.io. The steps are below ("Going live").
 
 ## Try it on this computer
 
@@ -55,6 +57,33 @@ site. Without `npm install` here the page still runs, and says it can't open til
 tiles through a stand-in for the loader, since it can't install it.)
 
 On one computer both windows hear the same microphone, so expect echo: mute one, or use headphones.
+
+## Going live (build step 5)
+
+In this order (as with the site's tables: **publish and pin before pushing**). Make an app password for
+thunderbird.cafe first, and delete it after step 2.
+
+1. **Commit this folder** (`commit-rooms-lab-step5.txt`).
+2. **Publish the house tile**, in `C:\thunderbird-cafe\rooms-lab`: `node scripts/publish.mjs --dry-run`, then
+   `node scripts/publish.mjs` (it asks for the app password itself, hidden). It writes `published.json`;
+   commit it (`commit-rooms-lab-published.txt`).
+3. **Deploy the relay**, in `C:\thunderbird-cafe\rooms-lab\relay`: see `relay/README.md`, "Deploying" (the
+   Fly app, one machine, the Wix CNAME `relay.rooms`, the certificate). `https://relay.rooms.thunderbird.cafe/health`
+   should show `ok`.
+4. **Copy the page into the site**, in `C:\thunderbird-cafe\rooms-lab`:
+   `node scripts/copy-to-site.mjs C:\thunderbird-cafe\pyxorium.github.io`. It stops if the house isn't
+   published. It writes the site's `src\rooms-lab\` and `src\pages\webtiles\rooms-lab\index.astro` (edit them
+   here, never there).
+5. **Try it from the site's dev server**, in `C:\thunderbird-cafe\pyxorium.github.io`: `npm run dev`, then
+   http://127.0.0.1:4321/webtiles/rooms-lab/ in two windows. It uses the real relay (127.0.0.1:4321 is let in)
+   and the real loading server. Then `npm run build`.
+6. **Push the site** (`commit-site-rooms-lab.txt` in the site folder), wait for the deploy, and open
+   https://thunderbird.cafe/webtiles/rooms-lab/.
+7. **The two-computer test** (plan section 1, "Done when").
+
+After changing the page here: run `copy-to-site.mjs` again and push the site. After changing the house:
+`node scripts/publish.mjs --again`, then `copy-to-site.mjs`, then push (the live page loads only the pinned
+version; delete the old house record in PDSls once the new page is live).
 
 ## What's in it
 
@@ -84,11 +113,17 @@ On one computer both windows hear the same microphone, so expect echo: mute one,
 - `src/formats.js`, `src/config.js`: room codes, links, the relay address, STUN servers, timings.
 - `src/room.css`: the look (Raku's palette), scoped to `.rl`.
 - `dev/`: the dev page, `serve.mjs` (`npm run dev`), and `tile-host.js` (the tile loader, for the dev page).
+- `site/`: what only the site's page has: `main.js` (the site's tile loader for the house and for tiles;
+  the house pinned and checked), `page-csp.js` (the page's security policy) and `index.astro` (the page).
+  `scripts/copy-to-site.mjs` copies them with the page modules into the site.
 - `test/`: `npm test` (the page's pieces, its relay connection against the real relay, the house's
   rules, the bridge, publishing to a stand-in server, reading tile records, the hide list). The browser
   check, `test/browser/check_room.mjs`, runs three Chromium pages with a fake mic and screen (and stand-ins
   for the tiles' servers, with the real servers' CORS headers); it needs
-  Playwright, which this folder doesn't install (it runs in the chat sandbox).
+  Playwright, which this folder doesn't install (it runs in the chat sandbox). `test/browser/check_site.mjs`
+  checks the page the site's way: the house published (to a stand-in server) and pinned by
+  `copy-to-site.mjs`, the site's entry point bundled with the real tile loader, the page's security policy,
+  and the house and a tile running through a replica of the tile loading server (`test/loader-replica.mjs`).
 
 ## Consent and privacy
 

@@ -26,11 +26,13 @@ test('new room codes and peer ids are random and the relay accepts them', () => 
   for (let i = 0; i < 20; i++) assert.ok(relay.isPeerId(page.newPeerId()));
 });
 
-test('room links: an invite carries only the room; the host link adds the key; ?relay= goes along on this computer only', () => {
+test('room links: an invite carries only the room; the host link adds the key; ?relay= and ?loader= go along on this computer only', () => {
   const key = 'K'.repeat(43);
   const local = new URL('http://127.0.0.1:5190/?relay=ws%3A%2F%2F127.0.0.1%3A9000%2F&other=1#old');
   assert.equal(page.inviteLink(local, 'abcdefghjkmn'), 'http://127.0.0.1:5190/?relay=ws%3A%2F%2F127.0.0.1%3A9000%2F#r=abcdefghjkmn');
-  const live = new URL('https://thunderbird.cafe/webtiles/rooms-lab/?relay=wss://evil.example/');
+  const site = new URL('http://127.0.0.1:4400/?relay=ws%3A%2F%2F127.0.0.1%3A9000%2F&loader=http%3A%2F%2Fload.x.localhost%2F.well-known%2Fweb-tiles%2F');
+  assert.equal(page.inviteLink(site, 'abcdefghjkmn'), 'http://127.0.0.1:4400/?relay=ws%3A%2F%2F127.0.0.1%3A9000%2F&loader=http%3A%2F%2Fload.x.localhost%2F.well-known%2Fweb-tiles%2F#r=abcdefghjkmn', 'the site page\'s test loader too');
+  const live = new URL('https://thunderbird.cafe/webtiles/rooms-lab/?relay=wss://evil.example/&loader=https://evil.example/.well-known/web-tiles/');
   assert.equal(page.inviteLink(live, 'abcdefghjkmn'), 'https://thunderbird.cafe/webtiles/rooms-lab/#r=abcdefghjkmn');
   assert.equal(page.hostLink(live, 'abcdefghjkmn', key), `https://thunderbird.cafe/webtiles/rooms-lab/#r=abcdefghjkmn&k=${key}`);
   assert.deepEqual(page.readRoomHash(`#r=abcdefghjkmn&k=${key}`), { room: 'abcdefghjkmn', hostKey: key });

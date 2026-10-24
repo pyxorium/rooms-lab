@@ -1,0 +1,34 @@
+---
+// /webtiles/rooms-lab: the Rooms lab, a hidden page (HIDDEN_PAGES in astro.config.mjs: noindex, unlinked,
+// left out of the sitemap). Small live rooms for tile demos among friends: voice, one shared screen at a
+// time, a house tile that holds the room's rules, and tiles opened for everyone. Everything it uses lives
+// in src/rooms-lab/, copied from C:\thunderbird-cafe\rooms-lab by its scripts/copy-to-site.mjs (this page
+// too: edit it there). Plan: claude/rooms-lab-plan.md in the Foundry project.
+import '../../../rooms-lab/room.css';
+import { pageCsp } from '../../../rooms-lab/page-csp.js';
+import { TILE_LOAD_DOMAIN } from '../../../lib/tile-load-domain.js';
+// The policy goes on the built page only: Astro's dev server adds inline scripts of its own.
+const csp = import.meta.env.PROD ? pageCsp(TILE_LOAD_DOMAIN) : null;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		{csp && <meta http-equiv="Content-Security-Policy" content={csp} />}
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="referrer" content="no-referrer" />
+		<meta name="robots" content="noindex, nofollow" />
+		<title>Rooms lab · thunderbird.cafe</title>
+		<meta name="description" content="A lab: small live rooms for tile demos among friends." />
+		<link rel="icon" href="/favicon.ico" sizes="any" />
+		<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png" />
+		<style is:global>html, body { margin: 0; background: #171411; }</style>
+	</head>
+	<body>
+		<div id="room"><noscript><p>The Rooms lab runs in your browser and needs JavaScript.</p></noscript></div>
+		<script>
+			import '../../../rooms-lab/main.js';
+		</script>
+	</body>
+</html>

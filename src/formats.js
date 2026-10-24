@@ -33,8 +33,10 @@ export function readRoomHash(hash = '') {
 export function inviteLink(loc, room) {
   const u = new URL(loc.href);
   const keep = new URLSearchParams();
-  const relay = u.searchParams.get('relay');
-  if (relay && (u.hostname === '127.0.0.1' || u.hostname === 'localhost')) keep.set('relay', relay);
+  // On this computer only: the test relay and (the site's page) the test loading server, kept for whoever joins.
+  if (u.hostname === '127.0.0.1' || u.hostname === 'localhost') {
+    for (const k of ['relay', 'loader']) { const v = u.searchParams.get(k); if (v) keep.set(k, v); }
+  }
   const q = keep.toString();
   return `${u.origin}${u.pathname}${q ? `?${q}` : ''}#r=${room}`;
 }
