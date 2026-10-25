@@ -46,6 +46,7 @@ const TILES = {
   stagea: { name: 'Counter A', letter: 'q' }, stageb: { name: 'Counter B', letter: 'r' },
   // A tile that names itself like a screen: the page's own "Tile" badge still says what it is.
   spoof1: { name: 'Nick’s screen', letter: 's' }, hidden1: { name: 'Hidden', letter: 't' },
+  tall1: { name: 'Tall One', letter: 'u', sizing: { width: 360, height: 640 } },    // step 9b: a tile taller than the phone allows
 };
 for (const [rkey, t] of Object.entries(TILES)) {
   t.bytes = new TextEncoder().encode(counterPage(t.name));
@@ -74,7 +75,7 @@ async function standIns(ctx) {
       const n = (recordReads.get(rkey) || 0) + 1;
       recordReads.set(rkey, n);
       const cid = t.changesAfter && n > t.changesAfter ? `bafyrei${'v'.repeat(52)}` : t.cid;    // changed after that many reads
-      const manifest = { name: t.name, sizing: { width: 400, height: 220 }, resources: { '/': { src: { $type: 'blob', ref: { $link: t.blobCid }, mimeType: 'text/html', size: t.bytes.length }, 'content-type': 'text/html' } } };
+      const manifest = { name: t.name, sizing: t.sizing || { width: 400, height: 220 }, resources: { '/': { src: { $type: 'blob', ref: { $link: t.blobCid }, mimeType: 'text/html', size: t.bytes.length }, 'content-type': 'text/html' } } };
       return json(route, { uri: uriOf(rkey), cid, value: { $type: 'ing.dasl.masl', cid: t.cid, tile: manifest, createdAt: '2026-10-23T12:00:00.000Z' } });
     }
     if (u.pathname === '/xrpc/com.atproto.sync.getBlob') {
@@ -283,6 +284,8 @@ try {
   assert.equal(await badge(ted), 'Screen');
   assert.equal(await ted.page.locator('.rl-caption').textContent(), 'Robin’s screen');
   assert.equal(await ted.page.locator('.rl-stage-full').isVisible(), true, 'full screen for a screen too');
+  assert.equal(await room(ted, () => getComputedStyle(document.querySelector('.rl-stage-bar .rl-stage-badge')).backgroundColor), 'rgb(239, 230, 216)', 'step 9b: the Screen badge in cream');
+  assert.equal(await room(nick, (u) => getComputedStyle(document.querySelector(`.rl-tile[data-uri="${u}"] .rl-stage-badge-tile`)).backgroundColor, uriOf('stagea')), 'rgb(63, 184, 168)', 'the Tile badge in turquoise');
   assert.equal(await stageHeight(ted), H, 'same size with a screen');
   if (process.env.SHOTS) await ted.page.screenshot({ path: `${process.env.SHOTS}/step9-screen-on-stage.png` });
 
@@ -314,17 +317,74 @@ try {
   await stageHasTile(nick, uriOf('stageb'));
   await stageHasTile(ted, uriOf('stageb'));
 
-  step('phone width: no sideways scroll, the card still over the stage');
+  step('phone width: no sideways scroll, the card still over the stage; step 9b: held upright, the stage grows to the tile\'s own height');
+  const sizes = (p) => room(p, () => {
+    const st = document.querySelector('.rl-stage');
+    const bar = st.querySelector('.rl-stage-bar').offsetHeight;
+    const card = document.querySelector('.rl-tile-on-stage');
+    return { h: Math.round(st.getBoundingClientRect().height), w: st.clientWidth, bar, tall: st.classList.contains('rl-stage-tall'), frame: Math.round(card?.querySelector('iframe')?.getBoundingClientRect().height || 0), vh: window.innerHeight };
+  });
   await ted.page.setViewportSize({ width: 375, height: 800 });
   await stageHasTile(ted, uriOf('stageb'));
   assert.equal(await ted.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  let z = await sizes(ted);
+  assert.equal(z.tall, true, 'upright phone: the tall tile stage');
+  assert.ok(z.h > Math.round(z.w * 9 / 16) + z.bar + 20, `taller than 16:9 (${z.h}px at ${z.w}px wide)`);
+  assert.ok(Math.abs(z.frame - 220) <= 4, `the tile gets its own height, 220px (got ${z.frame}px)`);
   if (process.env.SHOTS) await ted.page.screenshot({ path: `${process.env.SHOTS}/step9-phone.png`, fullPage: false });
+
+  step('step 9b: a tile taller than the phone: about three-quarters of the screen at most; turned sideways, the usual 16:9; on a laptop, the usual size');
+  await openTile(nick, 'tall1');
+  await stageHasTile(ted, uriOf('tall1'));
+  await until(ted, () => document.querySelector('.rl-stage').classList.contains('rl-stage-tall') && Math.abs(document.querySelector('.rl-stage').getBoundingClientRect().height - window.innerHeight * 0.75) <= 2);
+  z = await sizes(ted);
+  assert.ok(Math.abs(z.h - 600) <= 2, `capped at 75% of 800px (got ${z.h}px)`);
+  assert.equal(await ted.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  if (process.env.SHOTS) await ted.page.screenshot({ path: `${process.env.SHOTS}/step9b-phone-tall.png`, fullPage: false });
+  await ted.page.setViewportSize({ width: 800, height: 375 });
+  await until(ted, () => !document.querySelector('.rl-stage').classList.contains('rl-stage-tall'));
+  z = await sizes(ted);
+  assert.ok(Math.abs(z.h - (Math.round(z.w * 9 / 16) + z.bar)) <= 3, `sideways: 16:9 (got ${z.h}px at ${z.w}px wide)`);
+  await stageHasTile(ted, uriOf('tall1'));
   await ted.page.setViewportSize({ width: 1280, height: 900 });
+  await until(ted, (h) => Math.abs(document.querySelector('.rl-stage').getBoundingClientRect().height - h) <= 1, H);
+  await stageHasTile(ted, uriOf('tall1'));
+
+  step('step 9b: where the browser has no full screen (an iPhone), Full screen fills the window instead; Exit and Escape bring it back');
+  const iris = await person('Iris');
+  await iris.ctx.addInitScript(() => {
+    Object.defineProperty(Document.prototype, 'fullscreenEnabled', { get: () => false });
+    Object.defineProperty(Document.prototype, 'webkitFullscreenEnabled', { get: () => false });
+  });
+  await iris.page.setViewportSize({ width: 390, height: 844 });
+  await join(iris, invite, 'Join room');
+  await tileIs(iris, 'tall1', 'open');
+  await stageHasTile(iris, uriOf('tall1'));
+  const full = tileCard(iris, 'tall1').locator('.rl-tile-full');
+  assert.equal(await full.textContent(), 'Full screen');
+  await full.click();
+  await until(iris, (u) => {
+    const c = document.querySelector(`.rl-tile[data-uri="${u}"]`);
+    const r = c.getBoundingClientRect();
+    return c.classList.contains('rl-tile-fill') && r.top === 0 && r.left === 0 && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - window.innerHeight) <= 1;
+  }, uriOf('tall1'));
+  assert.equal(await room(iris, () => document.fullscreenElement), null, 'no real full screen was used');
+  assert.equal(await full.textContent(), 'Exit full screen');
+  assert.equal(await tileCard(iris, 'tall1').locator('.rl-stage-badge-tile').isVisible(), true, 'the page\'s Tile badge stays on top');
+  if (process.env.SHOTS) await iris.page.screenshot({ path: `${process.env.SHOTS}/step9b-fill.png` });
+  await full.click();
+  await stageHasTile(iris, uriOf('tall1'));
+  await full.click();
+  await until(iris, (u) => document.querySelector(`.rl-tile[data-uri="${u}"]`).classList.contains('rl-tile-fill'), uriOf('tall1'));
+  await iris.page.keyboard.press('Escape');
+  await stageHasTile(iris, uriOf('tall1'));
+  assert.equal(await full.textContent(), 'Full screen');
 
   step('Close for everyone on the staged tile: the stage is empty on every page');
-  await tileCard(nick, 'stageb').locator('.rl-tile-close').click();
+  await tileCard(nick, 'tall1').locator('.rl-tile-close').click();
   for (const p of [nick, robin, ted]) await stageClear(p);
   assert.equal(await ted.page.locator('.rl-tile-placeholder').count(), 0);
+  await inList(nick, 'stageb');
   await waitStatus(robin, /^(Nick put|The tile left|Robin|You)/).catch(() => {});
 
   assert.deepEqual(errors, [], 'no errors on the pages');

@@ -128,6 +128,7 @@ function fakeFrame() {
 function world({ channels = () => true } = {}) {
   const c = clock();
   const pages = {};
+  const retries = [];                     // each page's retry tick (step 9b), run by hand
   const hostAway = { v: false };
   const make = (me, host) => {
     const win = fakeWin();
@@ -148,6 +149,7 @@ function world({ channels = () => true } = {}) {
         return true;
       },
       now: c.now,
+      setIntervalImpl: (fn) => { retries.push(fn); return retries.length; }, clearIntervalImpl: () => {},
     });
     const tileSays = (uri, payload) => win.fire({ data: { action: LIVE_UP, payload }, source: frames.get(uri)?.contentWindow });
     return { me, live, win, frames, strip, store, tileSays, open: (uri) => { const f = fakeFrame(); frames.set(uri, f); return f; } };
@@ -155,7 +157,8 @@ function world({ channels = () => true } = {}) {
   pages['nick-peer-1'] = make('nick-peer-1', true);
   pages['robin-peer-1'] = make('robin-peer-1', false);
   pages['ted-peer-11'] = make('ted-peer-11', false);
-  return { c, pages, hostAway, nick: pages['nick-peer-1'], robin: pages['robin-peer-1'], ted: pages['ted-peer-11'] };
+  const retry = (ms = 2000) => { c.tick(ms); retries.forEach((f) => f()); };
+  return { c, pages, hostAway, retry, nick: pages['nick-peer-1'], robin: pages['robin-peer-1'], ted: pages['ted-peer-11'] };
 }
 
 test('not live: a copy is a room of one (presence just you; your messages come straight back)', () => {
@@ -298,4 +301,54 @@ test('a frame that isn\'t a tile on the strip, or not speaking v1, is ignored', 
   assert.equal(fr.got.length, 0, 'a copy that never said hello gets nothing');
   assert.equal(LIVE_DOWN, 'tiles-protocol-down-live-payload');
   assert.equal(LIVE_UP, 'tiles-protocol-up-live-payload');
+});
+
+test('step 9b: a guest\'s join that got lost goes out again until the host counts it; "joining" shows only after a while', () => {
+  let drop = 1;                           // the first live-join from Robin to Nick is lost (the owner's phone, Oct 25)
+  const w = world({ channels: (from, to) => !(from === 'robin-peer-1' && to === 'nick-peer-1' && drop-- > 0) });
+  const fn = w.nick.open(TILE), fr = w.robin.open(TILE);
+  for (const p of [w.nick, w.robin]) p.tileSays(TILE, { v: 1, kind: 'hello' });
+  for (const p of [w.nick, w.robin]) p.live.setLive(TILE, true);
+  assert.equal(w.nick.live.hub.ids(TILE).length, 1, 'the host counts only itself (Live · 1)');
+  assert.deepEqual(fr.last('presence').here, [fr.last('presence').you], 'Robin\'s copy: just you');
+  assert.equal(w.robin.live.joining(TILE), false, 'not yet: a normal join takes a moment');
+  w.c.tick(2600);
+  assert.equal(w.robin.live.joining(TILE), true, 'after a while: "Joining the live room…"');
+  assert.equal(w.nick.live.joining(TILE), false, 'never on the host\'s page');
+  w.retry();
+  assert.equal(w.nick.live.hub.ids(TILE).length, 2, 'asked again: counted');
+  assert.equal(fr.last('presence').here.length, 2);
+  assert.equal(fn.last('presence').here.length, 2);
+  assert.equal(w.robin.live.joining(TILE), false);
+});
+
+test('step 9b: the host\'s answer got lost: a repeated join from a page it already counts gets the list again', () => {
+  let drop = 1;                           // the first live-here from Nick to Robin is lost
+  const w = world({ channels: (from, to) => !(from === 'nick-peer-1' && to === 'robin-peer-1' && drop-- > 0) });
+  w.nick.open(TILE); const fr = w.robin.open(TILE);
+  for (const p of [w.nick, w.robin]) p.tileSays(TILE, { v: 1, kind: 'hello' });
+  for (const p of [w.nick, w.robin]) p.live.setLive(TILE, true);
+  assert.equal(w.nick.live.hub.ids(TILE).length, 2, 'the host counts Robin');
+  assert.equal(w.robin.live.joined(TILE), false, 'but Robin never heard');
+  w.retry();
+  assert.equal(w.robin.live.joined(TILE), true, 'the repeated join brought the list back');
+  assert.equal(fr.last('presence').here.length, 2);
+  assert.equal(w.nick.live.hub.ids(TILE).length, 2, 'still two (no double count)');
+});
+
+test('step 9b: once counted, nothing more goes out; a page with no connection keeps trying quietly', () => {
+  const sent = [];
+  const w = world({ channels: (from, to) => { if (from === 'ted-peer-11') sent.push(to); return from !== 'ted-peer-11'; } });
+  w.nick.open(TILE); w.robin.open(TILE); w.ted.open(TILE);
+  for (const p of [w.nick, w.robin, w.ted]) { p.tileSays(TILE, { v: 1, kind: 'hello' }); p.live.setLive(TILE, true); }
+  const robinJoinsBefore = w.nick.live.hub.ids(TILE).length;
+  const n = sent.length;
+  w.retry(); w.retry();
+  assert.equal(w.nick.live.hub.ids(TILE).length, robinJoinsBefore, 'Robin (counted) asked nothing again');
+  assert.equal(sent.length, n + 2, 'Ted (no connection) asks every tick');
+  assert.equal(w.ted.live.joining(TILE), true);
+  w.ted.live.setLive(TILE, false);
+  w.retry();
+  assert.equal(sent.length, n + 2, 'not live any more: no more asking');
+  assert.equal(w.ted.live.joining(TILE), false);
 });

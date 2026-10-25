@@ -215,9 +215,20 @@ try {
   assert.equal(await poll(nick, 'poll', () => !!document.querySelector('.poll')), false, 'Nick\'s copy has no poll');
   assert.equal(await poll(ted, 'poll', () => !!document.querySelector('.poll')), false);
 
-  step('Nick shares it live: the house allows the host\'s own; every card says so; each copy "Live · 3 here"; Robin\'s poll becomes everyone\'s, with her vote');
+  step('Nick shares it live: the house allows the host\'s own; every card says so; each copy "Live · 3 here"; Robin\'s poll becomes everyone\'s, with her vote. Step 9b: Ted\'s first joins are lost on the way (as the owner\'s phone\'s was): his card says "Joining the live room…" and his page keeps asking until he\'s counted');
+  await room(ted, () => {
+    const m = window.__roomsLab.room.mesh;
+    const real = m.sendData.bind(m);
+    window.__dropJoins = true;
+    m.sendData = (peer, obj) => (window.__dropJoins && obj?.kind === 'live-join' ? true : real(peer, obj));   // "sent", but lost
+  });
   await button(nick, 'poll', 'Share live with the room').click();
   for (const p of [nick, robin, ted]) await until(p, (u) => !document.querySelector(`.rl-tile[data-uri="${u}"] .rl-tile-live`).hidden, uriOf('poll'));
+  await until(ted, (u) => { const n = document.querySelector(`.rl-tile[data-uri="${u}"] .rl-tile-joining`); return n && !n.hidden && n.textContent === 'Joining the live room…'; }, uriOf('poll'), 10000);
+  await pollUntil(nick, 'poll', () => document.getElementById('status').textContent === 'Live · 2 here');
+  assert.equal(await room(robin, (u) => document.querySelector(`.rl-tile[data-uri="${u}"] .rl-tile-joining`).hidden, uriOf('poll')), true, 'Robin was counted: no note');
+  await room(ted, () => { window.__dropJoins = false; });
+  await until(ted, (u) => document.querySelector(`.rl-tile[data-uri="${u}"] .rl-tile-joining`).hidden, uriOf('poll'), 10000);
   assert.ok(await room(nick, () => window.__roomsLab.room.log.some((l) => /⌂ You: live \("Live poll"\): allow — The host may share tiles live\./.test(l))), 'the house decided');
   for (const p of [nick, robin, ted]) await pollUntil(p, 'poll', () => document.getElementById('status').textContent === 'Live · 3 here');
   for (const p of [nick, robin, ted]) await pollUntil(p, 'poll', () => document.querySelector('.poll h1')?.textContent === 'Tea or coffee?');

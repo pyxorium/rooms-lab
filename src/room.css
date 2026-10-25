@@ -57,7 +57,7 @@
 /* The page's own "Screen" / "Tile" badges (two colours), in the same corner. */
 .rl-stage-badge { flex: none; font-size: 12px; font-weight: 700; letter-spacing: .02em; border-radius: 999px; padding: 1px 9px; }
 .rl-stage-badge[hidden] { display: none; }
-.rl-stage-badge-screen { background: var(--rl-warn); color: #2a1a05; }
+.rl-stage-badge-screen { background: var(--rl-text); color: #1f1a16; }   /* cream (step 9b): amber means "attention" here */
 .rl-stage-badge-tile { background: var(--rl-glaze); color: var(--rl-ink); }
 .rl-stage:fullscreen { border: 0; border-radius: 0; }
 .rl-stage:fullscreen .rl-stage-area { aspect-ratio: auto; flex: 1 1 auto; }
@@ -167,3 +167,10 @@
 .rl-ta-words { display: flex; flex-direction: column; min-width: 0; }
 .rl-ta-handle { color: var(--rl-text); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rl-ta-name { color: var(--rl-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Step 9b: "fill the window" where the browser has no real full screen (an iPhone), and the joining note. */
+.rl-tile.rl-tile-fill { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important;
+  height: 100dvh !important; z-index: 1000; border-radius: 0; border: 0; padding: 8px; display: flex; flex-direction: column; background: var(--rl-panel); }
+.rl-tile-fill .rl-tile-body { flex: 1 1 auto; min-height: 0; }
+.rl-tile-fill .rl-tile-frame { height: 100% !important; }
+.rl-tile-joining { margin: 0 0 6px; font-size: 13px; color: var(--rl-muted); }
+.rl-tile-joining[hidden] { display: none; }

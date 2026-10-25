@@ -64,6 +64,13 @@ framework, which Raku can import as they are.
    staged tile. Empty, the stage says so inside the box, with a hint for the host and for guests. The
    sign-in box suggests handles as you type (Raku's suggestions; the letters go to typeahead.waow.tech, as
    in Raku, the Foundry and Daisy); the typed-name box never does.
+   **9b.** On a phone held upright, a tile on the stage gets a tall box: the tile's own height (as in the
+   list), at most about three-quarters of the screen (a screen being shared stays 16:9; so does everything
+   on a laptop or a phone turned sideways). Where the browser has no full screen (an iPhone), **Full screen**
+   fills the window instead (Escape or Exit to go back). A live tile whose page hasn't been counted by the
+   host's page yet keeps asking every couple of seconds, and its card says "Joining the live room…"
+   meanwhile (a phone's one request was lost in the owner's test). The Screen badge is cream (amber means
+   "attention" on this page).
 
 ## Try it on this computer
 

@@ -31,7 +31,7 @@ const PREVIEW_NOTE = 'Only you can see this (unless you’re sharing your whole 
 
 export const sizeText = (n) => (!(n > 0) ? '' : n < 1024 ? `${n} bytes` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
-const NO_LIVE = { info: () => ({ spoke: false, live: false, asking: false }), share: () => {}, stop: () => {}, ask: () => {} };
+const NO_LIVE = { info: () => ({ spoke: false, live: false, asking: false, joining: false }), share: () => {}, stop: () => {}, ask: () => {} };
 const NO_STAGE = { put: () => {}, off: () => {}, offLabel: () => 'Take off stage', full: null };
 
 export function createTileStrip({ mount, records, hide, tileHost = null, h, nameOf = () => 'Someone', isHost = () => false,
@@ -61,12 +61,14 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     const notice = h('p', { class: 'rl-tile-private' }, PREVIEW_NOTE);
     const note = h('p', { class: 'rl-tile-note', role: 'status' });
     const liveBadge = h('p', { class: 'rl-tile-live', hidden: true }, 'Shared live with the room');
+    // Step 9b: this copy is live but the host's page hasn't counted it yet (the page keeps asking).
+    const joinNote = h('p', { class: 'rl-tile-joining', role: 'status', hidden: true }, 'Joining the live room\u2026');
     // The page's own label while the card is on the stage: a tile can't change it (it's outside the tile's frame).
     const stageBadge = h('span', { class: 'rl-stage-badge rl-stage-badge-tile', hidden: true }, 'Tile');
     const el = h('li', { class: 'rl-tile', 'data-uri': t.uri },
       h('div', { class: 'rl-tile-head' }, h('span', { class: 'rl-tile-who' }, stageBadge, title, author, size, byEl), actions),
-      liveBadge, notice, desc, status, note, body);
-    return { el, title, author, size, desc, byEl, status, body, actions, notice, note, liveBadge, stageBadge };
+      liveBadge, joinNote, notice, desc, status, note, body);
+    return { el, title, author, size, desc, byEl, status, body, actions, notice, note, liveBadge, joinNote, stageBadge };
   }
 
   // The buttons on a card: a preview's come from the room page; a shared tile's are Hide for me and the
@@ -77,8 +79,9 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     return [
       { text: 'Put on stage', cls: 'rl-primary rl-tile-stage-on', hidden: () => !isHost() || on(), onclick: () => stage.put(e.uri) },
       { text: 'Take off stage', label: () => stage.offLabel(), cls: 'rl-tile-stage-off', hidden: () => !isHost() || !on(), onclick: () => stage.off() },
-      { text: 'Full screen', label: () => (fullNow() === e.el ? 'Exit full screen' : 'Full screen'), cls: 'rl-tile-full',
-        hidden: () => !on() || !stage.full?.(e.el), onclick: () => toggleFull(e) },
+      // Full screen; where the browser has none (an iPhone), "fill the window" instead (step 9b).
+      { text: 'Full screen', label: () => (isFull(e) ? 'Exit full screen' : 'Full screen'), cls: 'rl-tile-full',
+        hidden: () => !on(), onclick: () => toggleFull(e) },
       { text: 'Share live with the room', cls: 'rl-primary rl-tile-live-on', hidden: () => !isHost() || !info().spoke || info().live,
         disabled: () => info().asking, onclick: () => live.share(e.uri) },
       { text: 'Ask to share live', cls: 'rl-tile-live-ask', hidden: () => isHost() || !info().spoke || info().live,
@@ -90,11 +93,25 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     ];
   }
   const fullNow = () => (typeof document === 'undefined' ? null : document.fullscreenElement || document.webkitFullscreenElement || null);
+  const isFull = (e) => fullNow() === e.el || e.el.classList.contains('rl-tile-fill');
+  function setFill(e, on) {
+    if (e.el.classList.contains('rl-tile-fill') === on) return;
+    e.el.classList.toggle('rl-tile-fill', on);
+    paintButtons(e);
+    onUpdate(e.uri);
+  }
   function toggleFull(e) {
     if (fullNow() === e.el) { try { (document.exitFullscreen || document.webkitExitFullscreen)?.call(document); } catch { /* fine */ } return; }
+    if (e.el.classList.contains('rl-tile-fill')) { setFill(e, false); return; }
     const go = stage.full?.(e.el);
-    if (go) Promise.resolve().then(go).catch(() => onNote('full screen wasn\u2019t allowed'));
+    if (go) Promise.resolve().then(go).catch(() => setFill(e, true));
+    else setFill(e, true);                // no full screen here: the card covers the window instead
   }
+  // Escape leaves "fill the window" too (real full screen handles it itself).
+  globalThis.document?.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    for (const e of entries.values()) setFill(e, false);
+  });
   function setButtons(e, list) {
     e.buttons = list.map((b) => ({ ...b, el: h('button', { type: 'button', class: b.cls || '', onclick: () => b.onclick(e) }, b.text) }));
     e.actions.replaceChildren(...e.buttons.map((b) => b.el));
@@ -102,6 +119,7 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
   }
   function paintButtons(e) {
     e.liveBadge.hidden = e.private || !live.info(e.uri).live;
+    e.joinNote.hidden = e.private || !live.info(e.uri).joining;
     e.el.classList.toggle('rl-tile-is-live', !e.liveBadge.hidden);
     for (const b of e.buttons || []) {
       b.el.hidden = !!b.hidden?.();
@@ -221,7 +239,7 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
         e.placeholder = h('li', { class: 'rl-tile-placeholder', 'data-uri': e.uri }, ...placeholderWords(e.rec?.name));
         e.el.before(e.placeholder);
       } else if (!on && e.placeholder) { e.placeholder.remove(); e.placeholder = null; }
-      if (!on) for (const k of ['position', 'top', 'left', 'width', 'height']) e.el.style.removeProperty(k);
+      if (!on) { for (const k of ['position', 'top', 'left', 'width', 'height']) e.el.style.removeProperty(k); e.el.classList.remove('rl-tile-fill'); }
       paintButtons(e);
     }
   }
@@ -245,6 +263,8 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     /** Did this person hide that tile ("Hide for me")? */
     wasHidden: (uri) => [...dismissed].some((k) => k.startsWith(`${uri} `)),
     by: (uri) => entries.get(uri)?.by ?? null,
+    /** The tile's declared size ({ width, height } from its record), or null. */
+    sizing: (uri) => entries.get(uri)?.rec?.sizing ?? null,
     /** The buttons follow who's host, who's asking, and whether the tile is running. */
     refresh() { for (const e of entries.values()) paintButtons(e); },
     /** A line under a preview's status ("Asked the host…"). */

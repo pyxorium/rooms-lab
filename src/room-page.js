@@ -80,6 +80,7 @@ export const h = (tag, attrs = {}, ...kids) => {
   return e;
 };
 
+const PHONE_UPRIGHT = '(orientation: portrait) and (max-width: 700px)';   // step 9b: the tall tile stage
 const NAME_KEY = 'rooms-lab-name';                 // localStorage: your typed name, for next time
 const hostKeyKey = (room) => `rooms-lab-host:${room}`;   // sessionStorage: this tab's host key for a room
 const tilesKey = (room) => `rooms-lab-tiles:${room}`;    // sessionStorage: the host's tiles open for everyone (a reload keeps them)
@@ -364,7 +365,7 @@ export function mountRoomPage(root, options = {}) {
       mount: els.strip, records, hide: hideCheck, tileHost: o.tileHost, h, nameOf: (p) => nameOf(p),
       isHost: () => r.host, onCloseForEveryone: (uri) => closeForEveryone(uri), onNote: (t) => note('\u25a6', null, t),
       live: {
-        info: (uri) => ({ spoke: !!r.live?.spoke(uri), live: !!r.live?.isLive(uri), asking: r.wishes.size > 0 || !r.link?.joined || !hostHere() }),
+        info: (uri) => ({ spoke: !!r.live?.spoke(uri), live: !!r.live?.isLive(uri), asking: r.wishes.size > 0 || !r.link?.joined || !hostHere(), joining: !!r.live?.joining(uri) }),
         share: (uri) => wish('live', null, uri),
         ask: (uri) => wish('live', null, uri),
         stop: (uri) => liveForEveryone(uri, false),
@@ -428,7 +429,7 @@ export function mountRoomPage(root, options = {}) {
     r.placer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => placeStaged()) : null;
     r.placer?.observe(els.section);
     r.placer?.observe(els.stage);
-    r.onResize = () => placeStaged();
+    r.onResize = () => renderStage();        // a phone turned: the stage's shape may change (step 9b)
     globalThis.addEventListener?.('resize', r.onResize);
     r.onFull = () => { renderStage(); r.strip.refresh(); };
     globalThis.document?.addEventListener('fullscreenchange', r.onFull);
@@ -1331,7 +1332,31 @@ export function mountRoomPage(root, options = {}) {
     full.textContent = fullScreenNow(doc) === r.els.stage ? 'Exit full screen' : 'Full screen';
     r.els.stage.dataset.on = what;
     r.els.stage.classList.toggle('rl-empty', what !== 'screen');
-    placeStaged();
+    placeStaged();                 // first at the stage's width (the card's header wraps as it will there)…
+    shapeStage(what);              // …so its measured header is right for the tall phone stage…
+    placeStaged();                 // …then over the stage's final size
+  }
+
+  // Step 9b: on a phone held upright, a tile on the stage gets a tall box: the tile's own declared height (as in
+  // the list, where it's fully visible), at least the usual 16:9, at most about three-quarters of the screen.
+  // A screen and the empty stage keep 16:9; laptops, tablets in landscape and phones turned sideways too.
+  function shapeStage(what) {
+    const r = room;
+    const area = r.els.area;
+    const upright = !!globalThis.matchMedia?.(PHONE_UPRIGHT)?.matches;
+    const card = what === 'tile' ? r.strip.elementOf(r.stageTile) : null;
+    r.els.stage.classList.toggle('rl-stage-tall', !!(upright && card));
+    if (!upright || !card) { area.style.removeProperty('height'); area.style.removeProperty('aspect-ratio'); return; }
+    const w = r.els.stage.clientWidth;
+    const bar = r.els.stage.querySelector('.rl-stage-bar')?.offsetHeight || 40;
+    const body = card.querySelector('.rl-tile-body');
+    const chrome = Math.max(40, Math.round(card.getBoundingClientRect().height - (body?.getBoundingClientRect().height || 0)));
+    const tileH = Math.max(200, Math.min(700, r.strip.sizing(r.stageTile)?.height || 480));
+    const least = Math.round(w * 9 / 16) + bar;
+    const most = Math.max(least, Math.round((globalThis.innerHeight || 800) * 0.75));
+    const total = Math.min(most, Math.max(least, tileH + chrome));
+    area.style.aspectRatio = 'auto';
+    area.style.height = `${total - bar}px`;
   }
 
   function renderPeople() {

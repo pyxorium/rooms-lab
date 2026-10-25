@@ -168,9 +168,14 @@ export function createHub({ limits = LIMITS, now = () => Date.now() } = {}) {
 //   toPeer(peer, obj) → true if it went out on the data channel to that page
 //   session     sessionStorage (copy ids survive a reload); room: the room code
 //   onChange(uri)   a copy said hello, joined, left: the strip's buttons follow
+// Joining keeps trying (step 9b, after the owner's three-device run: a phone's one "live-join" was lost and
+// nothing tried again): while a copy here is live but not counted by the host's page, the join goes out again
+// every `retryMs`; after `slowMs` the card says "Joining the live room…" (joining(uri)). The host's page answers
+// a repeated join from a member it already counts with the list again (that answer may have been the one lost).
 export function createLiveTiles({
   win = globalThis, strip, room, session = null, isHost, me, hostPeer, hostAway = () => false, toPeer,
   limits = LIMITS, now = () => Date.now(), onLog = () => {}, onChange = () => {}, cryptoImpl = globalThis.crypto,
+  retryMs = 2000, slowMs = 2500, setIntervalImpl = globalThis.setInterval, clearIntervalImpl = globalThis.clearInterval,
 }) {
   const key = `rooms-lab-live:${room}`;
   let ids = {};
@@ -184,6 +189,8 @@ export function createLiveTiles({
   const receive = new Map();          // uri → bucket for live-msg from the host's page
   const hub = createHub({ limits, now });
   let paused = false;
+  const waitingSince = new Map();     // uri → when this page's copy started waiting to be counted (guests)
+  const waiting = (uri) => !isHost() && !paused && isLive(uri) && spoke.has(uri) && !joined.has(uri);
 
   const idOf = (uri) => {
     if (!isCopyId(ids[uri])) {
@@ -230,7 +237,7 @@ export function createLiveTiles({
     if (m.kind === 'live-here') {
       const you = idOf(m.uri);
       here.set(m.uri, m.here);
-      if (m.here.includes(you)) joined.add(m.uri); else joined.delete(m.uri);
+      if (m.here.includes(you)) { joined.add(m.uri); waitingSince.delete(m.uri); } else joined.delete(m.uri);
       presence(m.uri, { came: m.joined || [] });
       onChange(m.uri);
     } else if (m.kind === 'live-msg') {
@@ -245,8 +252,20 @@ export function createLiveTiles({
     if (!isLive(uri) || !spoke.has(uri) || paused) return;
     const id = idOf(uri);
     if (isHost()) { if (hub.join(uri, me(), id)) hubHere(uri, [id]); }
-    else { const hp = hostPeer(); if (hp) toPeer(hp, { kind: 'live-join', uri, id }); }
+    else {
+      if (!waitingSince.has(uri)) waitingSince.set(uri, now());
+      const hp = hostPeer();
+      if (hp) toPeer(hp, { kind: 'live-join', uri, id });
+    }
   }
+  // Keep asking until the host's page counts this copy.
+  const retryTimer = setIntervalImpl?.(() => {
+    for (const uri of live) {
+      if (waiting(uri)) { join(uri); if (now() - (waitingSince.get(uri) ?? now()) >= slowMs) onChange(uri); }
+      else if (waitingSince.delete(uri)) onChange(uri);
+    }
+  }, retryMs);
+  retryTimer?.unref?.();             // (in Node, for the tests: never keeps the process alive)
   function leave(uri) {
     joined.delete(uri);
     here.delete(uri);
@@ -306,6 +325,8 @@ export function createLiveTiles({
     isLive: (uri) => live.has(uri),
     spoke: (uri) => spoke.has(uri),
     joined: (uri) => joined.has(uri),
+    /** Live here, but not counted by the host's page for a while yet ("Joining the live room…"). */
+    joining: (uri) => waiting(uri) && now() - (waitingSince.get(uri) ?? now()) >= slowMs,
     hereOf: (uri) => [...(here.get(uri) || [])],
     /** From another page over the data channel (already checked by readPeerLive). */
     fromPeer(peer, m) {
@@ -314,7 +335,11 @@ export function createLiveTiles({
         return fromHost(m);
       }
       if (!isHost() || !hub.isOpen(m.uri)) return;
-      if (m.kind === 'live-join') { if (hub.join(m.uri, peer, m.id)) hubHere(m.uri, [m.id]); }
+      if (m.kind === 'live-join') {
+        if (hub.join(m.uri, peer, m.id)) hubHere(m.uri, [m.id]);
+        // Already counted (it asked again: our answer may have been lost): send that page the list again.
+        else if (hub.idOf(m.uri, peer) === m.id) deliverPeer(peer, { kind: 'live-here', uri: m.uri, here: hub.ids(m.uri) });
+      }
       else if (m.kind === 'live-leave') { if (hub.leave(m.uri, peer)) hubHere(m.uri); }
       else if (m.kind === 'live-send') hubSend(peer, m.uri, m.text, m.data);
     },
@@ -340,7 +365,7 @@ export function createLiveTiles({
     roleChanged() {
       for (const uri of live) { if (isHost()) hub.open(uri); joined.delete(uri); here.delete(uri); join(uri); }
     },
-    stop() { win.removeEventListener('message', onWindowMessage); live.clear(); },
+    stop() { win.removeEventListener('message', onWindowMessage); live.clear(); if (retryTimer != null) clearIntervalImpl?.(retryTimer); },
     // For the checks.
     get hub() { return hub; },
     idOf,
