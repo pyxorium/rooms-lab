@@ -48,6 +48,11 @@ framework, which Raku can import as they are.
    before they run out. Each person in "Here" shows **direct** or **via relay**. Add **`&turn=only`** to a
    room link to send everything through TURN from that page (a test switch; never in the invite link). If
    TURN isn't available the room works as before, direct only, and the page says so. See "TURN" below.
+8. **Optional sign-in** (`src/signin.js`, `relay/signin.js`, `lexicons/`): a label, not a gate. Rooms stay
+   "anyone with the link"; someone who signs in shows as **@handle ✓** (the relay checked it), everyone
+   else keeps a typed name marked **(unverified)**. A host who signed in can come back by account (another
+   device, no host key); one live connection per account. The page asks only for the **"Rooms"** permission
+   set: a pass for this relay, nothing else in the account. See "Sign-in" below.
 
 ## Try it on this computer
 
@@ -141,6 +146,48 @@ TURN service; 1,000 GB free each month, then $0.05 a GB, counting only what Clou
 - Cloudflare's addresses on port 53 are left out (browsers block that port). TLS on port 443
   (`turns:…:443`) is kept: it's what gets through the strictest networks.
 
+## Sign-in (build step 8)
+
+Decided in `claude/rooms-signin-plan.md` (the Foundry project); the join screen follows the approved mockup.
+
+- **The join screen** has two ways in: **Sign in with your account** ("Your handle will appear in the room
+  as verified. Optional.") or **Or type a name**, with "You'll appear in the room as …" underneath. A typed
+  name can't start with "@" (so nobody looks signed in at a glance). Sign-in happens on the join screen only;
+  signing out takes effect on the next join, never mid-call.
+- **The permission set** `cafe.thunderbird.rooms.authJoin` (title **"Rooms"**; `lexicons\`), published from
+  thunderbird.cafe by `node scripts/publish.mjs`, found by sign-in servers through the Wix TXT record
+  `_lexicon.rooms`. It holds one permission: `rpc` for `cafe.thunderbird.rooms.join`, with the audience
+  given when it's asked for. The page asks for
+  `atproto include:cafe.thunderbird.rooms.authJoin?aud=did:web:relay.rooms.thunderbird.cafe%23rooms_relay`;
+  the server grants `rpc:cafe.thunderbird.rooms.join?aud=…%23rooms_relay`. No records, no files, no other
+  service. (A set rather than the bare `rpc:` line, because the Authorize screen then shows its own words.)
+- **A pass for each join:** the page asks the person's own server for a one-minute token addressed to the
+  relay and to joining (`com.atproto.server.getServiceAuth`), and sends it with the join, also on every
+  rejoin after a drop (each pass works once). **The relay alone vouches:** it checks the pass with Bluesky's
+  code, then the handle both ways (the DID document names it, and it leads back), and only then tells the
+  room the handle. Pages never see anyone's pass or DID; the house learns only verified yes/no per person;
+  tiles learn nothing about it.
+- **The host by account:** a room made while signed in remembers that account (in the relay's memory only);
+  signing in again as it (another device, no host key) makes you the host again. The host key still works.
+- **One live connection per account:** joining signed in as an account already in the room replaces the
+  older tab, which says "You joined this room from another tab or device." with **Join here instead**.
+- **The sign-in client:** the live page's own description, `site\oauth.json` (copied to the site's
+  `public\webtiles\rooms-lab\oauth.json`); on 127.0.0.1 a loopback sign-in. Every sign-in on
+  thunderbird.cafe shares the library's store, filed by account only, and a new sign-in cancels that
+  account's other sign-in on the site: so signing in here signs that account out of Daisy or Seven-Up in
+  the same browser (and the reverse). The page looks first and warns only when it applies ("This will sign
+  @handle out of Daisy in this browser."); if it can't tell, it says it may. In Raku (its own site, one
+  client) this goes away.
+- **If something fails** the page says why and offers **Try again**: a handle that doesn't lead back
+  ("couldn't be confirmed"), sign-in not checkable right now, too many tries, a sign-in that ran out, or a
+  did:web account (only did:plc accounts can sign in, so the relay never fetches a DID document from a
+  domain its author controls; see `relay/README.md`).
+  Without Bluesky's packages on the relay, sign-in is unavailable and rooms carry on with typed names.
+- **Try it on this computer:** after `npm install` here (it adds the sign-in library, 0.5.8, for the dev
+  page) and in `relay\` (Bluesky's packages for the local relay), `npm run dev` and open
+  http://127.0.0.1:5190/ (127.0.0.1, not localhost). It works against your real account once the permission
+  set is published and `_lexicon.rooms` is in place.
+
 ## Live tiles: how a tile talks to its other copies
 
 Any tile can take part; nothing in its record changes. It talks with the page that holds it through
@@ -178,7 +225,8 @@ and nothing is kept: when the room ends, they're gone.
 
 ## What's in it
 
-- `src/room-page.js`: the page. The lobby (your name, New room / Join room / Rejoin as host), the stage
+- `src/room-page.js`: the page. The lobby (sign in or type a name, "You'll appear in the room as …", New
+  room / Join room / Rejoin as host), the stage
   (the presenter's screen), Unmute and Share my screen, who's here (host, presenting, talking, each direct
   connection), "Ask to see screen", the host's approval cards (Allow / Deny), the sharer's prompt
   ("Choose what to share…" / Not now), the host's Remove and End room, and the room's messages (wishes,
@@ -216,15 +264,22 @@ and nothing is kept: when the room ends, they're gone.
   they can be, through TURN otherwise; waits for the relay's TURN credentials; "direct" or "relay" per
   connection.
 - `relay/turn.js`: TURN credentials from Cloudflare (on the relay; the key never reaches a page).
+- `src/signin.js`: optional sign-in on the page (step 8): the sign-in library (0.5.8) in a small window, the
+  kept sign-in, a pass for each join, the Daisy/Seven-Up check before the window opens.
+- `relay/signin.js`, `relay/atproto-signin.js`: the relay's identity (did:web, served at
+  `/.well-known/did.json`) and its check of a pass and the handle (both ways), with Bluesky's packages.
+- `lexicons/cafe.thunderbird.rooms.authJoin.json`: the "Rooms" permission set (published by `publish.mjs`).
 - `src/levels.js`: who's talking (measured on each computer; nothing sent).
 - `src/presenting.js`: one presenter at a time, worked out the same way on every page.
 - `src/messages.js`: what the pages say to each other, checked on arrival.
 - `src/formats.js`, `src/config.js`: room codes, links (and the `&turn=only` switch), the relay address,
   STUN servers, timings.
 - `src/room.css`: the look (Raku's palette), scoped to `.rl`.
-- `dev/`: the dev page, `serve.mjs` (`npm run dev`), and `tile-host.js` (the tile loader, for the dev page).
+- `dev/`: the dev page, `serve.mjs` (`npm run dev`), `tile-host.js` (the tile loader, for the dev page) and
+  `signin-lib.js` (the sign-in library, for the dev page).
 - `site/`: what only the site's page has: `main.js` (the site's tile loader for the house and for tiles;
-  the house pinned and checked), `page-csp.js` (the page's security policy) and `index.astro` (the page).
+  the house pinned and checked; sign-in), `page-csp.js` (the page's security policy), `index.astro` (the
+  page) and `oauth.json` (the page's sign-in description).
   `scripts/copy-to-site.mjs` copies them with the page modules into the site.
 - `test/`: `npm test` (the page's pieces, its relay connection against the real relay, the house's
   rules, the bridge, publishing to a stand-in server, reading tile records, the hide list). The browser
@@ -238,7 +293,12 @@ and nothing is kept: when the room ends, they're gone.
   tiles across four pages on the dev page (the real poll, every page's relay messages recorded).
   `test/browser/check_turn.mjs` runs TURN with a stand-in for Cloudflare's credentials API and a tiny real
   TURN server (`test/browser/turn-standin.mjs`, for the checks only), so Chromium really sends media through
-  TURN with `&turn=only`.
+  TURN with `&turn=only`. `test/browser/check_signin.mjs` runs sign-in: the relay's real check (Bluesky's
+  `verifyJwt`, then the handle both ways) against real passes signed with Bluesky's code by a stand-in
+  account server, a stand-in sign-in library that keeps sessions in the library's own store
+  (`test/browser/signin-standin.js`), the lobby against the approved mockup, the host by account, one
+  connection per account, the Daisy warning, and no DID ever reaching a page. It needs Bluesky's packages
+  (`npm install` in `relay\`).
 
 ## Consent and privacy
 

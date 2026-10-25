@@ -1,6 +1,6 @@
 {
   "name": "rooms-lab",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "The Rooms lab: small live rooms for tile demos among friends (a proof of concept for thunderbird.cafe)",
   "private": true,
   "license": "UNLICENSED",
@@ -13,6 +13,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "devDependencies": {
+    "@atproto/oauth-client-browser": "0.5.8",
     "@dasl/tile-loader": "2.0.0",
     "esbuild": "^0.28.2"
   }

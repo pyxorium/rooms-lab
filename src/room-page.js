@@ -3,8 +3,9 @@
 // plain style, so Raku can import it later (R3).
 //
 // mountRoomPage(root, options) draws the page into `root`:
-// - the lobby: your name (typed, not checked), then "New room", "Join room" (from an invite link) or
-//   "Rejoin as host" (this tab made the room, or opened the private host link);
+// - the lobby: "Sign in with your account" (optional, step 8: the room shows your verified handle) or "Or type
+//   a name" (shown as typed, marked unverified), with "You'll appear in the room as …", then "New room",
+//   "Join room" (from an invite link) or "Rejoin as host" (this tab made the room, or opened the host link);
 // - the room: the stage (the presenter's screen), Unmute / Share my screen, the people here (the host,
 //   who's presenting, who's talking, each direct connection), "Ask to see screen", the host's Remove and
 //   End room, and the room's messages.
@@ -36,12 +37,20 @@
 // the host's own goes ahead; a guest's "Ask to share live" goes to the host's approval card (the house
 // decides which; a house that doesn't know "live" leaves it to the page, with the same answer). The host
 // turns it off again with "Stop sharing live". While the host is away, live tiles pause.
+//
+// Optional sign-in (step 8; signin.js; claude/rooms-signin-plan.md): a label, not a gate. Someone who signs in
+// joins with a pass, and the relay (it alone vouches) shows their handle to the room with a check mark; a typed
+// name shows "(unverified)" and can't start with "@". Sign-in happens before joining only; signing out takes
+// effect on the next join. The host signed in can come back by account (another device, no host key); one live
+// connection per account (an older tab hears "You joined this room from another tab or device"). The house
+// learns only verified yes/no per person; tiles learn nothing about it.
 import { connectRoom } from './room-link.js';
 import { createMesh } from './mesh.js';
 import { createLevels } from './levels.js';
 import { readPeerData, readIceServers } from './messages.js';
 import { afterAnnounce, afterPeople } from './presenting.js';
 import { cleanName, newRoomCode, readRoomHash, inviteLink, hostLink } from './formats.js';
+import { cleanHandle } from './signin.js';
 import { createHouseBridge } from './house-bridge.js';
 import { createTileRecords, parseTileUri } from './tile-records.js';
 import { createHideCheck } from './hide-check.js';
@@ -69,7 +78,7 @@ const meKey = (room) => `rooms-lab-me:${room}`;          // sessionStorage: this
 
 export const HONEST = [
   'This is a lab: a try-out, not a finished app.',
-  'Names are typed by each person and not checked: anyone can type any name.',
+  '\u2713 means the handle was checked through sign-in; other names are typed.',
   'Nothing is recorded or stored.',
   'The relay only introduces the people in a room and passes their messages; it stores nothing.',
   "Voice and screens go directly between computers when they can. When a network blocks that, they pass through Cloudflare's relay, still encrypted; Cloudflare sees addresses and timing, not what's said or shown.",
@@ -101,6 +110,8 @@ const DEFAULTS = {
   hideCheck: null,
   // Is the person's click still "fresh"? Browsers only open the screen picker straight from a click.
   activation: () => !!globalThis.navigator?.userActivation?.isActive,
+  // Optional sign-in (signin.js createSignIn, already started), or null: typed names only.
+  signIn: null,
 };
 
 const get = (s, k) => { try { return s?.getItem(k) ?? null; } catch { return null; } };
@@ -130,6 +141,9 @@ export function mountRoomPage(root, options = {}) {
   ));
 
   // ---- The lobby ----
+  // Two ways in (the approved mockup, claude/rooms-join-mockup.html): sign in (optional; the room shows your
+  // verified handle) or type a name (shown as typed, marked unverified). "You'll appear in the room as …"
+  // says which. Sign-in only when the page has it (o.signIn ready); otherwise just the name, as before.
   function lobby(note = '') {
     // A host link (#r=…&k=…): keep the key in this tab only, and take it out of the address bar so it
     // isn't copied along by accident.
@@ -140,39 +154,161 @@ export function mountRoomPage(root, options = {}) {
       try { o.history?.replaceState(null, '', ownLink(code)); } catch { /* fine */ }
     }
     const keptKey = code ? get(o.session, hostKeyKey(code)) : null;
-    const nameBox = h('input', { class: 'rl-name', type: 'text', maxlength: 40, autocomplete: 'nickname', value: get(o.storage, NAME_KEY) || '', 'aria-describedby': 'rl-name-help' });
+    const si = o.signIn && o.signIn.ready() ? o.signIn : null;
+    const account = si?.account || null;
     const problem = h('p', { class: 'rl-problem', role: 'alert' }, note);
-    const go = (how) => {
+    const nameBox = h('input', { class: 'rl-name', type: 'text', maxlength: 40, autocomplete: 'nickname', value: get(o.storage, NAME_KEY) || '', 'aria-describedby': 'rl-appear' });
+
+    // "You'll appear in the room as …" (or, for a typed name starting with "@", why it can't be used).
+    const appear = h('p', { class: 'rl-appear-as', id: 'rl-appear' });
+    const typedProblem = (raw) => (String(raw || '').trim().startsWith('@') ? 'A typed name can’t start with “@”. Sign in to show a handle.' : null);
+    const showAppear = () => {
+      if (account) { appear.replaceChildren(h('span', { class: 'rl-appear-label' }, 'You’ll appear in the room as'), h('span', { class: 'rl-appear-who' }, ...whoLabel(account.handle, true))); return; }
+      const bad = typedProblem(nameBox.value);
       const name = cleanName(nameBox.value);
-      if (!name) { problem.textContent = 'Type a name first (up to 40 characters).'; nameBox.focus(); return; }
-      put(o.storage, NAME_KEY, name);
+      appear.classList.toggle('rl-appear-bad', !!bad);
+      if (bad) appear.replaceChildren(h('span', { class: 'rl-problem' }, bad));
+      else appear.replaceChildren(h('span', { class: 'rl-appear-label' }, 'You’ll appear in the room as'),
+        name ? h('span', { class: 'rl-appear-who' }, ...whoLabel(name, false)) : h('span', { class: 'rl-unv' }, si ? 'Type a name or sign in.' : 'Type a name.'));
+      for (const b of actions.querySelectorAll('button')) b.disabled = !!bad;
+    };
+    nameBox.addEventListener('input', showAppear);
+
+    const go = (how) => {
+      let name;
+      if (account) name = account.handle;
+      else {
+        if (typedProblem(nameBox.value)) { nameBox.focus(); return; }
+        name = cleanName(nameBox.value);
+        if (!name) { problem.textContent = si ? 'Type a name first (up to 40 characters), or sign in.' : 'Type a name first (up to 40 characters).'; nameBox.focus(); return; }
+        put(o.storage, NAME_KEY, name);
+      }
+      const signedIn = account ? { getPass: () => si.getPass() } : {};
       if (how === 'new') {
         const fresh = newRoomCode();
         try { o.history?.replaceState(null, '', ownLink(fresh)); } catch { /* fine */ }
-        enter({ code: fresh, name, create: true });
-      } else enter({ code, name, hostKey: how === 'host' ? keptKey : null });
+        enter({ code: fresh, name, create: true, ...signedIn });
+      } else enter({ code, name, hostKey: how === 'host' ? keptKey : null, ...signedIn });
     };
     nameBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(code ? (keptKey ? 'host' : 'join') : 'new'); });
-    view.replaceChildren(h('section', { class: 'rl-lobby' },
-      code
-        ? h('p', {}, keptKey ? 'You made this room (or opened its host link) in this tab. ' : "You're invited to a room. ", 'Room ', h('code', {}, code), '.')
-        : h('p', {}, 'Start a room, then send its link to the people you want to join. Voice and one shared screen, for 2 to 6 people.'),
+
+    const actions = h('div', { class: 'rl-actions' },
+      code && keptKey ? h('button', { class: 'rl-primary', type: 'button', onclick: () => go('host') }, 'Rejoin as host') : null,
+      code ? h('button', { class: keptKey ? '' : 'rl-primary', type: 'button', onclick: () => go('join') }, keptKey ? 'Join as a guest' : 'Join room') : null,
+      h('button', { class: code ? '' : 'rl-primary', type: 'button', onclick: () => go('new') }, code ? 'Start a new room instead' : 'New room'),
+    );
+
+    const intro = code
+      ? h('p', {}, keptKey ? 'You made this room (or opened its host link) in this tab. ' : "You're invited to a room. ", 'Room ', h('code', {}, code), '.')
+      : h('p', {}, 'Start a room, then send its link to the people you want to join. Voice and one shared screen, for 2 to 6 people.');
+
+    // The typed-name panel (always there when signed out).
+    const namePanel = h('div', { class: 'rl-way rl-way-name' },
+      si ? h('h3', {}, 'Or type a name') : null,
       h('label', { class: 'rl-field' }, h('span', {}, 'Your name'), nameBox),
-      h('p', { class: 'rl-help', id: 'rl-name-help' }, 'Others see this name as you type it. It isn’t checked.'),
-      h('div', { class: 'rl-actions' },
-        code && keptKey ? h('button', { class: 'rl-primary', type: 'button', onclick: () => go('host') }, 'Rejoin as host') : null,
-        code ? h('button', { class: keptKey ? '' : 'rl-primary', type: 'button', onclick: () => go('join') }, keptKey ? 'Join as a guest' : 'Join room') : null,
-        h('button', { class: code ? '' : 'rl-primary', type: 'button', onclick: () => go('new') }, code ? 'Start a new room instead' : 'New room'),
-      ),
-      problem,
-    ));
-    if (!nameBox.value) nameBox.focus();
+      appear);
+
+    let panels;
+    if (account) {
+      // Signed in: one panel; the typed-name panel is gone (sign out to type a name instead).
+      panels = [h('div', { class: 'rl-way rl-way-signed', 'data-signed-in': '' },
+        h('h3', {}, 'Signed in'),
+        h('p', { class: 'rl-help rl-signed-as' }, `as @${account.handle} · `,
+          h('button', { type: 'button', class: 'rl-link rl-signout', onclick: async () => { await si.signOut(); lobby(); } }, 'Sign out')),
+        appear)];
+    } else if (si) {
+      panels = [signInPanel(si, { onOpen: (open) => { namePanel.hidden = open; actions.hidden = open; problem.textContent = ''; }, onDone: () => lobby() }), namePanel];
+    } else panels = [namePanel];
+
+    view.replaceChildren(h('section', { class: 'rl-lobby' }, intro, ...panels, actions, problem));
+    showAppear();
+    if (!account && !nameBox.value) nameBox.focus();
+  }
+
+  // The sign-in panel: a button, then (pressed) the handle box with Continue / Cancel. The library needs the
+  // handle to find the account's server before it opens the sign-in window.
+  function signInPanel(si, { onOpen, onDone }) {
+    const panel = h('div', { class: 'rl-way rl-way-signin' });
+    const help = () => h('p', { class: 'rl-help' }, 'Your handle will appear in the room as verified. Optional.');
+    const closed = () => {
+      onOpen(false);
+      panel.replaceChildren(
+        h('button', { type: 'button', class: 'rl-signin', onclick: opened }, 'Sign in with your account'),
+        help());
+    };
+    const checks = new Map();          // handle → Promise of clashFor(handle)
+    const settled = new Map();         // handle → clashFor's answer, once known
+    let warned = null;                 // the handle the clash warning was shown for
+    let abort = null;
+    const check = (hd) => {
+      if (!checks.has(hd)) checks.set(hd, si.clashFor(hd).catch(() => ({ unknown: true })).then((r) => { settled.set(hd, r); return r; }));
+      return checks.get(hd);
+    };
+    const clashText = (hd, r) => (r.unknown
+      ? 'Signing in here may sign this account out of Daisy or Seven-Up in this browser.'
+      : `This will sign @${hd} out of ${r.page} in this browser.`);
+    function opened() {
+      onOpen(true);
+      const box = h('input', { class: 'rl-handle', type: 'text', autocomplete: 'username', spellcheck: 'false', autocapitalize: 'none', placeholder: 'alice.bsky.social', 'aria-label': 'Your handle' });
+      const clash = h('p', { class: 'rl-clash', role: 'status' });
+      const status = h('p', { class: 'rl-problem', role: 'alert' });
+      const cont = h('button', { type: 'button', class: 'rl-primary rl-continue' }, 'Continue');
+      const cancel = h('button', { type: 'button', class: 'rl-link rl-cancel', onclick: () => { abort?.abort(); closed(); } }, 'Cancel');
+      let timer = null;
+      box.addEventListener('input', () => {
+        clash.textContent = ''; status.textContent = ''; warned = null;
+        clearTimeout(timer);
+        const hd = cleanHandle(box.value);
+        if (hd) timer = setTimeout(() => check(hd), 400);       // looked up while typing, so Continue knows at once
+      });
+      async function go() {
+        const hd = cleanHandle(box.value);
+        if (!hd) { status.textContent = 'Type your handle, like alice.bsky.social.'; box.focus(); return; }
+        status.textContent = '';
+        const known = settled.get(hd);
+        if (known && (known.page || known.unknown) && warned !== hd) { warned = hd; clash.textContent = clashText(hd, known); return; }
+        // The window opens straight from the click (browsers allow it only then); if the clash check is still
+        // running, it finishes while the window loads, and the window closes again if there's something to say.
+        const win = si.openWindow();
+        if (!win) { status.textContent = 'The sign-in window was blocked. Allow pop-ups for this page, then try again.'; return; }
+        if (!known) {
+          const r = await check(hd);
+          if ((r.page || r.unknown) && warned !== hd) { try { win.close(); } catch { /* fine */ } warned = hd; clash.textContent = clashText(hd, r); return; }
+        }
+        cont.disabled = true; box.disabled = true;
+        status.textContent = 'Finish signing in in the small window…';
+        abort = new AbortController();
+        try {
+          await si.signIn(hd, abort.signal);
+          onDone();
+        } catch (err) {
+          cont.disabled = false; box.disabled = false;
+          if (abort.signal.aborted) return;
+          status.textContent = /window|popup|closed/i.test(String(err?.message)) ? 'Sign-in didn’t finish. Try again.' : `Sign-in didn’t work: ${String(err?.message || err).slice(0, 140)}`;
+        }
+      }
+      cont.addEventListener('click', go);
+      box.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      panel.replaceChildren(
+        h('label', { class: 'rl-field' }, h('span', {}, 'Your handle'), h('span', { class: 'rl-row' }, box, cont)),
+        clash, help(), status, cancel);
+      box.focus();
+    }
+    closed();
+    return panel;
+  }
+
+  // A person's label: "@handle ✓" (checked through sign-in) or "Name (unverified)".
+  function whoLabel(name, verified) {
+    return verified
+      ? [`@${name}`, ' ', h('span', { class: 'rl-check', title: 'Handle checked through sign-in' }, '✓')]
+      : [name, ' ', h('span', { class: 'rl-unv' }, '(unverified)')];
   }
 
   // ---- The room ----
-  function enter({ code, name, create = false, hostKey = null }) {
+  function enter({ code, name, create = false, hostKey = null, getPass = null }) {
     const r = room = {
-      code, name, me: null, host: false, people: new Map(), presenter: null,
+      code, name, me: null, signedIn: !!getPass, host: false, people: new Map(), presenter: null,
       micTrack: null, micStream: null, muted: true, screenTrack: null, screenStream: null,
       remote: new Map(),           // peer → { audio: <audio>, voice: stream, screen: stream }
       conn: new Map(),             // peer → connection state
@@ -236,7 +372,7 @@ export function mountRoomPage(root, options = {}) {
       onChange: () => r.strip.refresh(),
     });
     r.link = connectRoom({
-      url, room: code, name, create, hostKey, WebSocketImpl: o.WebSocketImpl, times: o.times,
+      url, room: code, name, create, hostKey, getPass, WebSocketImpl: o.WebSocketImpl, times: o.times,
       onState: (state, d = {}) => linkState(state, d),
       onSelf: (peer) => { r.me = peer; r.mesh.setSelf(peer); },
       onMessage: (m) => relayMessage(m),
@@ -354,7 +490,9 @@ export function mountRoomPage(root, options = {}) {
   }
 
   const say = (text) => { if (room) room.els.status.textContent = text; };
-  const nameOf = (peer) => (peer === room?.me ? 'You' : room?.people.get(peer)?.name || 'Someone');
+  // A person as the page's messages say it: "@handle" (signed in) or the typed name.
+  const shown = (p) => (p ? (p.verified ? `@${p.name}` : p.name) : 'Someone');
+  const nameOf = (peer) => (peer === room?.me ? 'You' : shown(room?.people.get(peer)));
   function note(dir, peer, text) {
     const r = room;
     if (!r) return;
@@ -390,17 +528,31 @@ export function mountRoomPage(root, options = {}) {
     else if (state === 'no-room') say(`There's no room with this code right now. Trying again (${d.tries})…`);
     else if (state === 'not-host') { put(o.session, hostKeyKey(r.code), null); say("That host link doesn't match this room, so you're joining as a guest."); }
     else if (state === 'over') {
+      const signInWhy = {
+        handle: 'Your handle couldn\u2019t be confirmed (it has to lead back to your account). Sign in again later, or type a name.',
+        lookup: 'Sign-in can\u2019t be checked right now. Try again in a moment, or type a name.',
+        unavailable: 'Sign-in can\u2019t be checked right now. Try again in a moment, or type a name.',
+        'too many': 'Too many sign-in attempts. Wait a minute, or type a name.',
+        'signed out': 'Your sign-in has run out. Sign in again, or type a name.',
+        // did:plc only (the relay refuses did:web before any lookup; claude/rooms-lab-step8.md).
+        'account type': 'Sign-in here works with most accounts, but not this kind yet. Type a name to join.',
+      }[d.detail] || 'Your sign-in wasn\u2019t accepted. Sign in again, or type a name.';
+      if (d.why === 'sign-in' && d.detail === 'signed out') o.signIn?.forget?.();
       const why = {
         ended: d.by === 'host gone' ? "The room has ended: the host didn't come back in time." : 'The host ended the room.',
         removed: 'The host took you out of the room.',
-        replaced: 'You opened this room as host in another tab or window, so this one stopped.',
+        replaced: d.by === 'account' ? 'You joined this room from another tab or device.' : 'You opened this room as host in another tab or window, so this one stopped.',
+        'sign-in': signInWhy,
         full: 'This room is full (6 people).',
         'no room': "There's no room with this code. It may have ended, or the link may be wrong.",
         'room taken': 'That room code is taken. Start a new room.',
         refused: "The relay didn't accept that name or code.",
       }[d.why] || 'You left the room.';
       if (d.why === 'ended') put(o.session, hostKeyKey(r.code), null);
-      return leave(why, { quiet: true });
+      // Back to this room's start (the link kept): after a replaced tab ("Join here instead") or a sign-in
+      // that wasn't accepted ("Try again": sign in again, or type a name).
+      const again = d.why === 'replaced' && d.by === 'account' ? 'Join here instead' : d.why === 'sign-in' ? 'Try again' : null;
+      return leave(why, { quiet: true, again });
     }
     render();
   }
@@ -437,8 +589,11 @@ export function mountRoomPage(root, options = {}) {
     for (const p of was) if (!here.includes(p)) r.live.peerGone(p);
     const host = list.find((p) => p.host);
     r.live.setPaused(!r.host && !!host?.away);
-    if (host && host.away) say(`Waiting for ${host.name} to come back…`);
+    if (host && host.away) say(`Waiting for ${shown(host)} to come back…`);
     else if (r.els.status.textContent.startsWith('Waiting for')) say('The host is back.');
+    // The relay says which handle it checked: keep that spelling for the lobby next time.
+    const mine = list.find((p) => p.peer === r.me);
+    if (mine && mine.verified && r.signedIn) o.signIn?.sawHandle?.(mine.name);
     render();
   }
 
@@ -558,7 +713,8 @@ export function mountRoomPage(root, options = {}) {
     const r = room;
     return {
       host: r.me, presenter: r.presenter || null,
-      peers: [...r.people.values()].map((p) => ({ peer: p.peer, name: p.name, host: !!p.host, ...(p.away ? { away: true } : {}) })),
+      // verified: yes/no only (step 8, decision 7): never a handle's proof or a DID. Today's rule set ignores it.
+      peers: [...r.people.values()].map((p) => ({ peer: p.peer, name: p.name, host: !!p.host, verified: !!p.verified, ...(p.away ? { away: true } : {}) })),
     };
   }
 
@@ -1011,7 +1167,7 @@ export function mountRoomPage(root, options = {}) {
       const asked = [...r.wishes.values()].some((w) => w.target === p.peer);
       return h('li', { class: 'rl-person', 'data-peer': p.peer },
         h('span', { class: `rl-dot${r.talking.has(p.peer) ? ' rl-talking' : ''}`, title: r.talking.has(p.peer) ? 'talking' : '' }),
-        h('span', { class: 'rl-who' }, p.name),
+        h('span', { class: 'rl-who' }, ...whoLabel(p.name, !!p.verified)),
         mine ? h('span', { class: 'rl-tag' }, 'you') : null,
         p.host ? h('span', { class: 'rl-tag rl-tag-host' }, 'host') : null,
         p.away ? h('span', { class: 'rl-tag' }, 'away') : null,
@@ -1030,7 +1186,7 @@ export function mountRoomPage(root, options = {}) {
   }
 
   // ---- Leaving ----
-  function leave(why, { quiet = false } = {}) {
+  function leave(why, { quiet = false, again = null } = {}) {
     const r = room;
     if (!r) return;
     r.over = true;
@@ -1051,17 +1207,21 @@ export function mountRoomPage(root, options = {}) {
     room = null;
     view.replaceChildren(h('section', { class: 'rl-over' },
       h('p', { class: 'rl-status', role: 'status' }, why),
-      h('div', { class: 'rl-actions' }, h('button', { type: 'button', class: 'rl-primary', onclick: () => {
-        // The room's link is still in the address bar: take it out, so "Back to the start" starts fresh.
-        try { o.history?.replaceState(null, '', o.loc.pathname + o.loc.search); } catch { /* fine */ }
-        lobby();
-      } }, 'Back to the start'))));
+      h('div', { class: 'rl-actions' },
+        again ? h('button', { type: 'button', class: 'rl-primary rl-again', onclick: () => lobby() }, again) : null,
+        h('button', { type: 'button', class: again ? '' : 'rl-primary', onclick: () => {
+          // The room's link is still in the address bar: take it out, so "Back to the start" starts fresh.
+          try { o.history?.replaceState(null, '', o.loc.pathname + o.loc.search); } catch { /* fine */ }
+          lobby();
+        } }, 'Back to the start'))));
   }
 
   lobby();
   return {
     // For the checks (and the console): what the page knows right now.
     get room() { return room; },
+    // What the house is told about the room right now (the host's page): for the checks.
+    get houseState() { return room ? houseState() : null; },
     leave: () => leave('You left the room.'),
   };
 }

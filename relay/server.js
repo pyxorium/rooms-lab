@@ -1,6 +1,7 @@
 // The Rooms lab relay on Fly.io (thunderbird-rooms-relay, wss://relay.rooms.thunderbird.cafe/): the network
-// around rooms.js. Modelled on Daisy's relay (C:\thunderbird-cafe\daisy-relay\server.js), without the lounge
-// and without sign-in (the lab uses a room code and typed names; rooms-lab-plan.md, section 3).
+// around rooms.js. Modelled on Daisy's relay (C:\thunderbird-cafe\daisy-relay\server.js), without the lounge.
+// Rooms are "anyone with the link" (a room code); people type a name, or sign in to show a verified handle
+// (step 8, below).
 //
 // rooms.js holds the rules (rooms, the host and its grace period, passing messages, limits). This file only
 // does the WebSockets, with the `ws` package, and the limits that matter on the open internet.
@@ -15,12 +16,21 @@
 // connections, at most once every 10 minutes each and a few times in all, and a cap for the whole relay: the
 // credentials are worth money. The key stays here (Fly secrets TURN_KEY_ID, TURN_KEY_API_TOKEN).
 //
-// It never logs messages, room codes, names or addresses: only a startup line and, now and then, counts.
+// Optional sign-in (step 8, signin.js): a join may carry a pass (a one-minute service-auth token from the
+// person's own server, for cafe.thunderbird.rooms.join at did:web:relay.rooms.thunderbird.cafe#rooms_relay).
+// This file checks it before rooms.js sees the join (atproto-signin.js: Bluesky's verifyJwt and identity
+// lookups, loaded the first time someone joins signed in), then hands rooms.js { did, handle }. A pass that
+// isn't accepted gets { t: "error", why: "sign-in", detail } (detail: "pass", "handle", "lookup",
+// "unavailable", "too many" or "refused"; never the account). Without the packages, sign-in is unavailable
+// and rooms carry on with typed names. The relay serves its own DID document at /.well-known/did.json.
+//
+// It never logs messages, room codes, names, accounts or addresses: only a startup line and, now and then, counts.
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createRooms, LIMITS } from './rooms.js';
 import { createTurn } from './turn.js';
+import { didDocument, RELAY_HOST, signInDetail } from './signin.js';
 
 export const DEFAULTS = Object.freeze({
   port: 8080,
@@ -42,6 +52,10 @@ export const DEFAULTS = Object.freeze({
   iceEveryMs: 10 * 60_000,            // one connection may ask for TURN credentials this often…
   iceMaxPerConn: 6,                   // …and this many times in all (the first, then a refresh every 3 hours)
   icePerMinute: 60,                   // the whole relay: at most this many asks to Cloudflare a minute
+  signInPerConn: 6,                   // sign-in checks one connection may ask for (each reconnect brings a fresh pass)…
+  signInPerMinute: 120,               // …and the whole relay a minute (each check looks the account up)
+  maxBacklog: 50,                     // messages held while a connection's sign-in is being checked
+  publicHost: RELAY_HOST,             // the relay's own name: its identity is did:web:<publicHost>
 });
 
 const originAllowed = (cfg, origin) => cfg.allowedOrigins.includes('*') || cfg.allowedOrigins.includes(origin);
@@ -52,6 +66,10 @@ export function createRelayServer(userConfig = {}) {
   const turn = cfg.turn || createTurn({});
   const now = cfg.now || (() => Date.now());
   let iceMinute = { at: 0, n: 0 };
+  let signInMinute = { at: 0, n: 0 };
+  // The sign-in check: Bluesky's packages, loaded the first time a pass arrives, or one handed in (the tests).
+  let signIn = cfg.signIn ? Promise.resolve(cfg.signIn) : null;
+  const getSignIn = () => (signIn ||= import('./atproto-signin.js').then((m) => m.atprotoSignIn()).catch(() => { signIn = null; return null; }));
   const conns = new Map();          // ws → { ip, joined, errors, alive, joinTimer }
   const perIp = new Map();
   const timers = [];
@@ -59,6 +77,11 @@ export function createRelayServer(userConfig = {}) {
 
   const server = http.createServer((req, res) => {
     const path = (req.url || '').split('?')[0];
+    if (req.method === 'GET' && path === '/.well-known/did.json') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300', 'access-control-allow-origin': '*' });
+      res.end(JSON.stringify(didDocument(cfg.publicHost)));
+      return;
+    }
     if (req.method === 'GET' && (path === '/health' || path === '/healthz')) {
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
       res.end('ok');
@@ -106,7 +129,7 @@ export function createRelayServer(userConfig = {}) {
 
   function onOpen(ws, ip) {
     perIp.set(ip, (perIp.get(ip) || 0) + 1);
-    const c = { ip, joined: false, errors: 0, alive: true, joinTimer: null, ice: { n: 0, at: -Infinity } };
+    const c = { ip, joined: false, errors: 0, alive: true, joinTimer: null, ice: { n: 0, at: -Infinity }, signIns: 0, busy: false, backlog: [] };
     conns.set(ws, c);
     rooms.open(ws);
     c.joinTimer = setTimeout(() => { if (!c.joined) ws.close(1008, 'join a room first'); }, cfg.joinWithinMs);
@@ -115,11 +138,52 @@ export function createRelayServer(userConfig = {}) {
       c.alive = true;
       if (isBinary) return deliver([{ conn: ws, msg: { t: 'error', why: 'not text' } }]);
       const text = data.toString('utf8');
-      if (text.length < 64 && /^\s*\{\s*"t"\s*:\s*"ice"\s*\}\s*$/.test(text)) return askIce(ws, c);
-      deliver(rooms.receive(ws, text));
+      if (c.busy) {                       // a sign-in is being checked: keep the order
+        if (c.backlog.length >= cfg.maxBacklog) return deliver([{ conn: ws, msg: { t: 'error', why: 'too many' } }]);
+        c.backlog.push(text);
+        return;
+      }
+      handleText(ws, c, text);
     });
     ws.on('close', () => onClose(ws, c));
     ws.on('error', () => { /* a close always follows */ });
+  }
+
+  function handleText(ws, c, text) {
+    if (text.length < 64 && /^\s*\{\s*"t"\s*:\s*"ice"\s*\}\s*$/.test(text)) return askIce(ws, c);
+    // A join with a pass: checked first (signin.js), then handed to rooms.js with the account.
+    if (text.includes('"pass"') && text.length <= LIMITS.maxBytes) {
+      let m = null;
+      try { m = JSON.parse(text); } catch { /* rooms.js answers "not JSON" */ }
+      if (m && typeof m === 'object' && !Array.isArray(m) && m.t === 'join' && 'pass' in m) {
+        c.busy = true;
+        return checkJoin(ws, c, text, m).finally(() => {
+          c.busy = false;
+          while (!c.busy && c.backlog.length && conns.has(ws)) handleText(ws, c, c.backlog.shift());
+        });
+      }
+    }
+    deliver(rooms.receive(ws, text));
+  }
+
+  async function checkJoin(ws, c, text, m) {
+    const refuse = (detail) => deliver([{ conn: ws, msg: { t: 'error', why: 'sign-in', detail } }]);
+    if (c.joined) return deliver(rooms.receive(ws, text));          // "already joined"
+    if (typeof m.pass !== 'string' || !m.pass) return refuse('pass');
+    const t = now();
+    if (t - signInMinute.at >= 60_000) signInMinute = { at: t, n: 0 };
+    if (c.signIns >= cfg.signInPerConn || signInMinute.n >= cfg.signInPerMinute) return refuse('too many');
+    c.signIns += 1; signInMinute.n += 1;
+    const check = await getSignIn();
+    if (!conns.has(ws)) return;
+    if (!check) return refuse('unavailable');
+    let who;
+    try { who = await check(m.pass); } catch (err) {
+      if (!conns.has(ws)) return;
+      return refuse(signInDetail(err));
+    }
+    if (!conns.has(ws)) return;
+    deliver(rooms.receive(ws, text, { did: who.did, handle: who.handle }));
   }
 
   // TURN credentials for a page in a room (turn.js).
@@ -194,7 +258,8 @@ if (isMain) {
   cfg.turn = createTurn({ keyId: env.TURN_KEY_ID, apiToken: env.TURN_KEY_API_TOKEN });
   const r = createRelayServer(cfg);
   const port = await r.listen();
-  console.log(`Rooms lab relay listening on :${port}; pages allowed from ${r.cfg.allowedOrigins.join(', ')}; TURN ${cfg.turn.on ? 'on (Cloudflare)' : 'off'}`);
+  const signInState = await import('./atproto-signin.js').then(() => 'ready').catch(() => 'unavailable (run npm install)');
+  console.log(`Rooms lab relay listening on :${port}; pages allowed from ${r.cfg.allowedOrigins.join(', ')}; TURN ${cfg.turn.on ? 'on (Cloudflare)' : 'off'}; sign-in ${signInState}`);
   const stop = async () => { await r.close(); process.exit(0); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);

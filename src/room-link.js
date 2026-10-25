@@ -15,11 +15,17 @@
 //   id, and the page is told (`onSelf`), since its direct connections must start again under the new id;
 // - "host key" (a host link that doesn't match the room): joins as a guest instead;
 // - "ended", "removed", "replaced", "full" and bad names or codes end the connection for good (`over`).
+//
+// Signed in (step 8): `getPass` gives a fresh pass (one minute, used once) for every join, including each
+// rejoin after a drop. A pass the relay doesn't accept ({ t: "error", why: "sign-in", detail }) or one that
+// can't be had (the sign-in ran out) ends the connection (`over`, why "sign-in"): the page goes back to its
+// start, where the person can sign in again or type a name. "replaced" carries the relay's why ("account":
+// the same account joined from another tab or device).
 import { newPeerId } from './formats.js';
 import { TIMES } from './config.js';
 
 export function connectRoom({
-  url, room, name, create = false, hostKey = null, peer: firstPeer = newPeerId(),
+  url, room, name, create = false, hostKey = null, peer: firstPeer = newPeerId(), getPass = null,
   onMessage = () => {}, onState = () => {}, onSelf = () => {},
   WebSocketImpl = globalThis.WebSocket, makePeerId = newPeerId, times = TIMES,
   setTimer = (f, ms) => setTimeout(f, ms), clearTimer = (t) => clearTimeout(t),
@@ -30,6 +36,16 @@ export function connectRoom({
 
   const joinMessage = () => ({ t: 'join', room, peer, name, ...(wantsHost ? { create: true } : {}), ...(wantsHost && key ? { hostKey: key } : {}) });
   const sendRaw = (m) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); };
+  // A join, with a fresh pass when signed in (each pass works once).
+  let joinSeq = 0;
+  async function sendJoin() {
+    const me = ws, seq = ++joinSeq;
+    if (!getPass) return sendRaw(joinMessage());
+    let pass;
+    try { pass = await getPass(); } catch (err) { return over('sign-in', { detail: 'signed out', error: String(err?.message || err) }); }
+    if (stopped || me !== ws || seq !== joinSeq) return;     // the connection changed meanwhile: that one sends its own
+    sendRaw({ ...joinMessage(), pass });
+  }
   const over = (why, detail) => {
     if (stopped) return;
     stopped = true; joined = false;
@@ -44,7 +60,7 @@ export function connectRoom({
     joined = false;
     try { ws = new WebSocketImpl(url); } catch { return retry(); }
     const me = ws;
-    me.onopen = () => { delay = 500; sendRaw(joinMessage()); };
+    me.onopen = () => { delay = 500; sendJoin(); };
     me.onmessage = (e) => {
       if (me !== ws) return;
       let m;
@@ -59,6 +75,7 @@ export function connectRoom({
       joined = false;
       if (stopped) return;
       if (e && e.code >= 4000 && e.code <= 4002) return over(e.code === 4000 ? 'ended' : e.code === 4001 ? 'removed' : 'replaced');
+      // (a "replaced" message arrives before its close, so `over` has already said why)
       onState('down', { wasJoined: was });
       retry();
     };
@@ -76,7 +93,7 @@ export function connectRoom({
         break;
       case 'ended': return over('ended', { by: m.why });
       case 'removed': return over('removed');
-      case 'replaced': return over('replaced');
+      case 'replaced': return over('replaced', m.why ? { by: m.why } : {});
       case 'full': return over('full');
       case 'error': return error(m);
       default: break;
@@ -92,18 +109,19 @@ export function connectRoom({
         if (++noRoom > times.noRoomTries) return over('no room');
         onState('no-room', { tries: noRoom });
         clearTimer(timer);
-        timer = setTimer(() => sendRaw(joinMessage()), times.noRoomRetryMs);
+        timer = setTimer(() => sendJoin(), times.noRoomRetryMs);
         return;
       case 'peer taken':
         peer = makePeerId();
         onSelf(peer);
-        return sendRaw(joinMessage());
+        return sendJoin();
       case 'host key':
         wantsHost = false; key = null;
         onState('not-host');
-        return sendRaw(joinMessage());
+        return sendJoin();
       case 'room taken': return over('room taken');
       case 'name': case 'room': case 'peer': return over('refused', { detail: m.why });
+      case 'sign-in': return over('sign-in', { detail: m.detail || 'refused' });
       default: return onMessage(m);
     }
   }

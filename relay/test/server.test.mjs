@@ -63,7 +63,13 @@ test('health and a plain page for the address; other paths not found', async () 
   assert.match(text, /stores nothing/);
   assert.match(text, /directly between the computers/);
   assert.equal((await get('/anything'))[0], 404);
-  assert.equal((await get('/.well-known/did.json'))[0], 404);     // no identity yet: the lab has no sign-in
+  // Step 8: the relay's own identity (did:web), for sign-in passes addressed to it.
+  const res = await fetch(`http://127.0.0.1:${port}/.well-known/did.json`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('access-control-allow-origin'), '*');
+  const doc = await res.json();
+  assert.equal(doc.id, 'did:web:relay.rooms.thunderbird.cafe');
+  assert.deepEqual(doc.service.map((x) => x.id), ['#rooms_relay']);
   await r.close();
 });
 
@@ -256,10 +262,175 @@ test('the Fly files: the app name, one region, sleeps when idle and wakes on a c
   assert.match(toml, /fly deploy --ha=false/);
   assert.match(toml, /relay\.rooms\.thunderbird\.cafe/);
   const docker = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8');
-  assert.match(docker, /COPY server\.js rooms\.js turn\.js \.\//);
+  assert.match(docker, /COPY server\.js rooms\.js turn\.js signin\.js atproto-signin\.js \.\//);
+  // Every file the relay imports (dynamic imports too) is shipped.
+  const shipped = docker.match(/^COPY (server\.js[^\n]*) \.\/$/m)[1].split(/\s+/);
+  for (const f of ['server.js', 'atproto-signin.js', 'signin.js', 'rooms.js', 'turn.js']) {
+    const src = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+    for (const [, dep] of src.matchAll(/(?:from|import\()\s*'\.\/([^']+)'/g)) assert.ok(shipped.includes(dep), `the Dockerfile doesn't copy ${dep} (imported by ${f})`);
+  }
   assert.match(docker, /npm ci --omit=dev/);
   const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.deepEqual(lock.packages[''].dependencies, pkg.dependencies, 'package-lock.json is out of date: run npm install');
   for (const name of Object.keys(pkg.dependencies)) assert.ok(lock.packages[`node_modules/${name}`], `${name} is missing from package-lock.json: run npm install`);
+});
+
+// ---- Optional sign-in (step 8) ----
+// A stand-in for the check (signin.js's is tested in signin.test.mjs with Bluesky's real code): passes are
+// "pass:<did>:<handle>[:<n>]", each usable once; "pass:bad" is refused, "pass:slow" takes a moment.
+function standInSignIn() {
+  const used = new Set();
+  const calls = [];
+  const check = async (pass) => {
+    calls.push(pass);
+    if (pass === 'pass:slow') { await new Promise((r) => setTimeout(r, 150)); return { did: 'did:plc:slowslowslowslowslowslow', handle: 'slow.example' }; }
+    const m = /^pass:(did:plc:[a-z2-7]{24}):([a-z0-9.-]+)(:\d+)?$/.exec(pass);
+    if (!m) throw Object.assign(new Error('no'), { code: 'BadJwtSignature' });
+    if (used.has(pass)) throw Object.assign(new Error('used'), { code: 'PassUsed' });
+    used.add(pass);
+    return { did: m[1], handle: m[2] };
+  };
+  return { check, calls };
+}
+const NICK = 'did:plc:nicknicknicknicknicknick';
+const ROBIN = 'did:plc:robinrobinrobinrobinrobi';
+
+test('sign-in: a join with a pass shows the checked handle (verified), never the typed name or the account; typed names can\'t start with "@"', async () => {
+  const si = standInSignIn();
+  const { r, url } = await start({ signIn: si.check });
+  const host = await page(url);
+  const frames = [];
+  host.ws.on('message', (d) => frames.push(d.toString()));
+  join(host, 'peer-host-001', 'Anything typed', { create: true, pass: `pass:${NICK}:nick.example` });
+  const j = await host.next();
+  assert.equal(j.t, 'joined');
+  assert.equal(j.verified, true);
+  assert.deepEqual((await host.next()).list, [{ peer: 'peer-host-001', name: 'nick.example', host: true, verified: true }]);
+  const guest = await page(url);
+  join(guest, 'peer-guest-1', '@nick.example');
+  assert.deepEqual(await guest.next(), { t: 'error', why: 'name' });
+  join(guest, 'peer-guest-1', 'Robin');
+  assert.equal((await guest.next()).t, 'joined');
+  const list = (await guest.next()).list;
+  assert.deepEqual(list.map((p) => [p.name, !!p.verified]), [['nick.example', true], ['Robin', false]]);
+  await host.until('peers');
+  assert.ok(!frames.join('\n').includes(NICK), 'the account (DID) never goes to a page');
+  host.ws.close(); guest.ws.close();
+  await r.close();
+});
+
+test('sign-in: a pass that isn\'t accepted gets "sign-in" with a short reason and no seat; a used pass too; the page can join again typed', async () => {
+  const si = standInSignIn();
+  const { r, url } = await start({ signIn: si.check });
+  const p = await page(url);
+  join(p, 'peer-host-001', 'Nick', { create: true, pass: 'pass:bad' });
+  assert.deepEqual(await p.next(), { t: 'error', why: 'sign-in', detail: 'refused' });
+  join(p, 'peer-host-001', 'Nick', { create: true, pass: 7 });
+  assert.deepEqual(await p.next(), { t: 'error', why: 'sign-in', detail: 'pass' });
+  const good = `pass:${NICK}:nick.example`;
+  join(p, 'peer-host-001', 'Nick', { create: true, pass: good });
+  assert.equal((await p.next()).t, 'joined');
+  await p.next();
+  const q = await page(url);
+  join(q, 'peer-guest-1', 'Robin', { pass: good });                       // the same pass again
+  assert.deepEqual(await q.next(), { t: 'error', why: 'sign-in', detail: 'pass' });
+  join(q, 'peer-guest-1', 'Robin');
+  assert.equal((await q.next()).t, 'joined');
+  p.ws.close(); q.ws.close();
+  await r.close();
+});
+
+test('sign-in: unavailable (Bluesky\'s packages missing) → "unavailable", and rooms carry on with typed names', async () => {
+  const { r, url } = await start({ signIn: null });
+  // Force the lazy import to fail: point the check at nothing.
+  const p = await page(url);
+  join(p, 'peer-host-001', 'Nick', { create: true, pass: `pass:${NICK}:nick.example` });
+  const m = await p.next();
+  // In the sandbox the packages are missing (unavailable); on the owner's computer the real check refuses the stand-in pass.
+  assert.equal(m.why, 'sign-in');
+  assert.ok(['unavailable', 'refused', 'pass'].includes(m.detail), m.detail);
+  join(p, 'peer-host-001', 'Nick', { create: true });
+  assert.equal((await p.next()).t, 'joined');
+  p.ws.close();
+  await r.close();
+});
+
+test('sign-in: messages sent while a pass is being checked wait their turn (nothing overtakes the join)', async () => {
+  const si = standInSignIn();
+  const { r, url } = await start({ signIn: si.check });
+  const host = await page(url);
+  join(host, 'peer-host-001', 'Nick', { create: true });
+  await host.next(); await host.next();
+  const slow = await page(url);
+  join(slow, 'peer-slow-01', 'x', { pass: 'pass:slow' });
+  slow.send({ t: 'all', data: { hello: 1 } });
+  assert.equal((await slow.next()).t, 'joined');
+  await slow.until('peers');
+  const got = await host.until('from');
+  assert.deepEqual(got.data, { hello: 1 }, 'the message after the join arrived, after the join');
+  host.ws.close(); slow.ws.close();
+  await r.close();
+});
+
+test('sign-in: at most a few checks per connection, and a cap for the whole relay', async () => {
+  const si = standInSignIn();
+  const { r, url } = await start({ signIn: si.check, signInPerConn: 2, signInPerMinute: 3 });
+  const p = await page(url);
+  join(p, 'peer-guest-1', 'x', { pass: 'pass:bad' });
+  assert.equal((await p.next()).detail, 'refused');
+  join(p, 'peer-guest-1', 'x', { pass: 'pass:bad' });
+  assert.equal((await p.next()).detail, 'refused');
+  join(p, 'peer-guest-1', 'x', { pass: 'pass:bad' });
+  assert.equal((await p.next()).detail, 'too many');
+  const q = await page(url);
+  join(q, 'peer-guest-2', 'x', { pass: 'pass:bad' });
+  assert.equal((await q.next()).detail, 'refused');
+  join(q, 'peer-guest-2', 'x', { pass: 'pass:bad' });
+  assert.equal((await q.next()).detail, 'too many', 'the relay\'s minute is used up');
+  assert.equal(si.calls.length, 3);
+  p.ws.close(); q.ws.close();
+  await r.close();
+});
+
+test('sign-in: the host by account (another device, no host key) and one live connection per account', async () => {
+  const si = standInSignIn();
+  const { r, url } = await start({ signIn: si.check });
+  const laptop = await page(url);
+  join(laptop, 'peer-laptop-1', 'x', { create: true, pass: `pass:${NICK}:nick.example:1` });
+  assert.equal((await laptop.next()).host, true);
+  await laptop.next();
+  const robin = await page(url);
+  join(robin, 'peer-robin-1', 'x', { pass: `pass:${ROBIN}:robin.example:1` });
+  assert.equal((await robin.next()).host, false);
+  await robin.next();
+  // Nick's phone, signed in as Nick, without the host key: the host moves there; the laptop is replaced.
+  const phone = await page(url);
+  join(phone, 'peer-phone-1', 'x', { pass: `pass:${NICK}:nick.example:2` });
+  const pj = await phone.next();
+  assert.equal(pj.t, 'joined');
+  assert.equal(pj.host, true, 'the host by account');
+  assert.ok(pj.hostKey, 'and gets the host key for later');
+  assert.deepEqual(await laptop.until('replaced'), { t: 'replaced', why: 'account' });
+  let list = (await phone.until('peers')).list;
+  assert.deepEqual(list.map((p) => [p.peer, p.name, p.host]).sort(), [['peer-phone-1', 'nick.example', true], ['peer-robin-1', 'robin.example', false]]);
+  // Robin opens a second tab, signed in: the first tab gives way; still two people here.
+  const robin2 = await page(url);
+  join(robin2, 'peer-robin-2', 'x', { pass: `pass:${ROBIN}:robin.example:2` });
+  assert.equal((await robin2.next()).host, false);
+  assert.deepEqual(await robin.until('replaced'), { t: 'replaced', why: 'account' });
+  list = (await phone.until('peers')).list;
+  assert.deepEqual(list.map((p) => p.peer).sort(), ['peer-phone-1', 'peer-robin-2']);
+  // A typed name is never anyone's account: a guest typing "Nick" doesn't move the host.
+  const typed = await page(url);
+  join(typed, 'peer-typed-1', 'Nick');
+  assert.equal((await typed.next()).host, false);
+  // The host's phone drops; the laptop comes back, signed in as Nick, without the key: host again.
+  phone.ws.terminate();
+  await robin2.until('peers');
+  const back = await page(url);
+  join(back, 'peer-laptop-2', 'x', { pass: `pass:${NICK}:nick.example:3` });
+  assert.equal((await back.next()).host, true);
+  for (const p of [laptop, robin, phone, robin2, typed, back]) p.ws.close();
+  await r.close();
 });

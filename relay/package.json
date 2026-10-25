@@ -1,7 +1,7 @@
 {
   "name": "thunderbird-rooms-relay",
-  "version": "0.2.0",
-  "description": "The Rooms lab relay on Fly.io: introduces the people in a room to each other, passes their messages, stores nothing",
+  "version": "0.3.0",
+  "description": "The Rooms lab relay on Fly.io: introduces the people in a room to each other, passes their messages, checks sign-in passes, stores nothing",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
@@ -14,6 +14,11 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@atproto/identity": "^0.5.13",
+    "@atproto/xrpc-server": "^0.13.5",
     "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@atproto/crypto": "^0.5.7"
   }
 }

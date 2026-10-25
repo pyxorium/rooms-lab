@@ -8,16 +8,17 @@
 // carries the setup messages that introduce them.
 //
 // Page → relay (JSON; the field `t` is the message type):
-//   { t: "join", room, peer, name, create?: true, hostKey? }
+//   { t: "join", room, peer, name, create?: true, hostKey?, pass? }   (pass: signed in, step 8; server.js checks it)
 //   { t: "to", peer, data }     one person (WebRTC offers, answers and network candidates; wish prompts)
 //   { t: "all", data }          everyone else in the room (house decisions, tile shares)
 //   { t: "remove", peer }       host only: that person is taken out of the room
 //   { t: "end" }                host only: the room ends for everyone
 // Relay → page:
-//   { t: "joined", room, peer, host, hostKey? }   (hostKey only to the host)
-//   { t: "peers", list: [{ peer, name, host, away? }] }   to everyone, whenever someone comes or goes
+//   { t: "joined", room, peer, host, verified?, hostKey? }   (hostKey only to the host)
+//   { t: "peers", list: [{ peer, name, host, verified?, away? }] }   to everyone, whenever someone comes or goes
+//                                 (verified: true → `name` is a handle the relay checked through sign-in)
 //   { t: "from", peer, data, all? }               a message from `peer` (`all: true` if it went to everyone)
-//   { t: "full" }  { t: "replaced" }  { t: "removed" }  { t: "ended", why: "host" | "host gone" }
+//   { t: "full" }  { t: "replaced", why?: "account" }  { t: "removed" }  { t: "ended", why: "host" | "host gone" }
 //   { t: "error", why }
 //
 // Rooms (rooms-lab-plan.md, section 5 and section 10):
@@ -37,6 +38,18 @@
 //   ids are visible to everyone in the room, so taking over by id would be too easy. The page picks a new
 //   id and joins again.
 // - At most 6 people per room (an away host keeps their place). Rooms vanish when they end; nothing is kept.
+//
+// Optional sign-in (build step 8; claude/rooms-signin-plan.md): a label, not a gate.
+// - server.js checks a join's pass (signin.js) and hands receive() the result, { did, handle }. The person is
+//   then shown by their handle, with `verified: true`; whatever name the page sent is ignored. Typed names
+//   stay as they are, except that a typed name can't start with "@" (so nobody can look signed in).
+// - The DID stays here, in memory, while the person is in the room, for two rules only, and is never sent
+//   to anyone:
+//   - the host by account: a room made by someone signed in remembers that account; a later join signed in
+//     as the same account is the host, with or without the host key (another device, say). The host key
+//     still works as before;
+//   - one live connection per account: a join signed in as an account already in the room replaces the
+//     older connection, which hears { t: "replaced", why: "account" } (the host's role moves along).
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 
@@ -73,7 +86,7 @@ export function createRooms({ now = () => Date.now(), limits = LIMITS, makeHostK
   const closeConn = (conn, code, why) => ({ conn, close: { code, why } });
 
   const listOf = (r) => [...r.people].map(([peer, p]) => ({
-    peer, name: p.name, host: peer === r.host, ...(peer === r.host && !p.conn ? { away: true } : {}),
+    peer, name: p.name, host: peer === r.host, ...(p.verified ? { verified: true } : {}), ...(peer === r.host && !p.conn ? { away: true } : {}),
   }));
   const live = (r) => [...r.people.values()].filter((p) => p.conn);
   const announce = (r, out) => {
@@ -93,47 +106,59 @@ export function createRooms({ now = () => Date.now(), limits = LIMITS, makeHostK
     }
   }
 
-  function seat(conn, code, r, peer, name, isHost, out) {
-    r.people.set(peer, { name, conn });
-    if (isHost) { r.host = peer; r.hostAwaySince = null; }
+  function seat(conn, code, r, peer, name, isHost, out, who) {
+    r.people.set(peer, { name, conn, verified: !!who, did: who ? who.did : null });
+    if (isHost) { r.host = peer; r.hostAwaySince = null; if (who) r.hostDid = who.did; }
     Object.assign(conns.get(conn), { room: code, peer });
-    out.push(send(conn, { t: 'joined', room: code, peer, host: isHost, ...(isHost ? { hostKey: r.hostKey } : {}) }));
+    out.push(send(conn, { t: 'joined', room: code, peer, host: isHost, ...(who ? { verified: true } : {}), ...(isHost ? { hostKey: r.hostKey } : {}) }));
     announce(r, out);
   }
 
-  function join(conn, m, out) {
+  // The older connection of someone who just came back (the host key, or the same account): told, closed.
+  function replace(old, out, why) {
+    if (!old || !old.conn) return;
+    out.push(send(old.conn, { t: 'replaced', ...(why ? { why } : {}) }));
+    out.push(closeConn(old.conn, CLOSE.replaced, 'replaced'));
+    detach(old.conn);
+  }
+
+  // who: { did, handle } when server.js checked the join's pass (signed in), else null (a typed name).
+  function join(conn, m, out, who = null) {
     if (conns.get(conn).room) return out.push(send(conn, { t: 'error', why: 'already joined' }));
     if (!isRoomCode(m.room)) return out.push(send(conn, { t: 'error', why: 'room' }));
     if (!isPeerId(m.peer)) return out.push(send(conn, { t: 'error', why: 'peer' }));
-    const name = cleanName(m.name);
-    if (!name) return out.push(send(conn, { t: 'error', why: 'name' }));
+    const name = who ? who.handle : cleanName(m.name);
+    if (!name || (!who && name.startsWith('@'))) return out.push(send(conn, { t: 'error', why: 'name' }));
     if ('hostKey' in m && !isHostKey(m.hostKey)) return out.push(send(conn, { t: 'error', why: 'host key' }));
     const r = rooms.get(m.room);
 
     if (!r) {
       if (m.create !== true) return out.push(send(conn, { t: 'error', why: 'no room' }));
-      const room = { hostKey: m.hostKey || makeHostKey(), host: null, hostAwaySince: null, people: new Map() };
+      const room = { hostKey: m.hostKey || makeHostKey(), host: null, hostDid: null, hostAwaySince: null, people: new Map() };
       rooms.set(m.room, room);
-      return seat(conn, m.room, room, m.peer, name, true, out);
+      return seat(conn, m.room, room, m.peer, name, true, out, who);
     }
 
-    if (m.hostKey) {
-      if (!sameKey(m.hostKey, r.hostKey)) return out.push(send(conn, { t: 'error', why: 'host key' }));
+    // The same account already in the room (another tab or device): that older connection gives way.
+    const sameAccount = who ? [...r.people].find(([, p]) => p.did === who.did) : null;
+    const keyOk = !!m.hostKey && sameKey(m.hostKey, r.hostKey);
+    const accountIsHost = !!(who && r.hostDid && who.did === r.hostDid);
+    if (m.hostKey && !keyOk && !accountIsHost) return out.push(send(conn, { t: 'error', why: 'host key' }));
+
+    if (keyOk || accountIsHost) {
+      if (m.peer !== r.host && r.people.has(m.peer) && !(sameAccount && sameAccount[0] === m.peer)) return out.push(send(conn, { t: 'error', why: 'peer taken' }));
       const old = r.people.get(r.host);
-      if (m.peer !== r.host && r.people.has(m.peer)) return out.push(send(conn, { t: 'error', why: 'peer taken' }));
-      if (old && old.conn && old.conn !== conn) {
-        out.push(send(old.conn, { t: 'replaced' }));
-        out.push(closeConn(old.conn, CLOSE.replaced, 'replaced'));
-        detach(old.conn);
-      }
+      if (old && old.conn !== conn) replace(old, out, who && old.did === who.did ? 'account' : null);
       r.people.delete(r.host);
-      return seat(conn, m.room, r, m.peer, name, true, out);
+      if (sameAccount && sameAccount[0] !== r.host) { replace(sameAccount[1], out, 'account'); r.people.delete(sameAccount[0]); }
+      return seat(conn, m.room, r, m.peer, name, true, out, who);
     }
 
     if (m.create === true) return out.push(send(conn, { t: 'error', why: 'room taken' }));
-    if (r.people.has(m.peer)) return out.push(send(conn, { t: 'error', why: 'peer taken' }));
-    if (r.people.size >= limits.maxPeople) return out.push(send(conn, { t: 'full' }));
-    seat(conn, m.room, r, m.peer, name, false, out);
+    if (r.people.has(m.peer) && !(sameAccount && sameAccount[0] === m.peer)) return out.push(send(conn, { t: 'error', why: 'peer taken' }));
+    if (sameAccount) { replace(sameAccount[1], out, 'account'); r.people.delete(sameAccount[0]); }
+    if (r.people.size >= limits.maxPeople) { if (sameAccount) announce(r, out); return out.push(send(conn, { t: 'full' })); }
+    seat(conn, m.room, r, m.peer, name, false, out, who);
   }
 
   function allowed(c) {
@@ -150,7 +175,8 @@ export function createRooms({ now = () => Date.now(), limits = LIMITS, makeHostK
     open(conn) { conns.set(conn, { room: null, peer: null, tokens: limits.burst, at: now() }); },
 
     // A text message from a connection. Returns what to do: [{ conn, msg }] or [{ conn, close: { code, why } }].
-    receive(conn, text) {
+    // who: for a join, { did, handle } when server.js checked its pass; otherwise null.
+    receive(conn, text, who = null) {
       const out = [];
       const c = conns.get(conn);
       if (!c) return out;
@@ -159,7 +185,7 @@ export function createRooms({ now = () => Date.now(), limits = LIMITS, makeHostK
       let m;
       try { m = JSON.parse(text); } catch { return [send(conn, { t: 'error', why: 'not JSON' })]; }
       if (!m || typeof m !== 'object' || Array.isArray(m)) return [send(conn, { t: 'error', why: 'not a message' })];
-      if (m.t === 'join') { join(conn, m, out); return out; }
+      if (m.t === 'join') { join(conn, m, out, who && typeof who.did === 'string' && typeof who.handle === 'string' ? who : null); return out; }
       if (!['to', 'all', 'remove', 'end'].includes(m.t)) return [send(conn, { t: 'error', why: 'unknown type' })];
       if (!c.room) return [send(conn, { t: 'error', why: 'join a room first' })];
       const r = rooms.get(c.room);

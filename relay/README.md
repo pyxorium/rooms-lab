@@ -21,10 +21,14 @@ There's **no sign-in** in the lab: a room code stands in, and names are typed by
 
 Page to relay:
 
-- `{ t: "join", room, peer, name, create?: true, hostKey? }`
+- `{ t: "join", room, peer, name, create?: true, hostKey?, pass? }`
   - `room`: a code the page makes, 10 to 64 letters, digits, `-` or `_` (random, at least 10).
   - `peer`: a random id per page load, 8 to 64 of the same characters.
-  - `name`: typed, 1 to 40 characters, no control characters, not verified.
+  - `name`: typed, 1 to 40 characters, no control characters, not verified, not starting with "@".
+  - `pass` (step 8, optional sign-in): a one-minute service-auth token from the person's own server
+    (`aud` `did:web:relay.rooms.thunderbird.cafe#rooms_relay`, `lxm` `cafe.thunderbird.rooms.join`). The relay
+    checks it (Bluesky's `verifyJwt`; only did:plc accounts; at most 5 minutes; each pass once), then the handle both
+    ways, and shows the person by that handle (`verified: true`); `name` is then ignored. See "Sign-in".
   - `create: true` makes the room; the maker is the **host** and gets a **host key**.
   - `hostKey`: the host coming back (see below).
 - `{ t: "to", peer, data }`: to one person (WebRTC setup; wish prompts).
@@ -35,11 +39,12 @@ Page to relay:
 
 Relay to page:
 
-- `{ t: "joined", room, peer, host, hostKey? }` (the key only to the host).
-- `{ t: "peers", list: [{ peer, name, host, away? }] }`: to everyone, whenever someone comes or goes
-  (everyone sees who's here; no hidden watchers).
+- `{ t: "joined", room, peer, host, verified?, hostKey? }` (the key only to the host).
+- `{ t: "peers", list: [{ peer, name, host, verified?, away? }] }`: to everyone, whenever someone comes or goes
+  (everyone sees who's here; no hidden watchers). `verified: true`: `name` is a handle the relay checked.
 - `{ t: "from", peer, data, all? }`: a message, with who sent it (`all: true` if it went to everyone).
-- `{ t: "full" }` (6 people already), `{ t: "replaced" }` (closed 4002), `{ t: "removed" }` (closed 4001),
+- `{ t: "full" }` (6 people already), `{ t: "replaced", why?: "account" }` (closed 4002; `account`: the same
+  account joined from another tab or device), `{ t: "removed" }` (closed 4001),
   `{ t: "ended", why: "host" | "host gone" }` (closed 4000).
 - `{ t: "ice", servers: [{ urls, username?, credential? }], ttl: 14400 }`: Cloudflare TURN credentials for 4
   hours (port 53 addresses left out), or `{ t: "ice", none: "off" }` (no TURN key here) or
@@ -47,7 +52,36 @@ Relay to page:
 - `{ t: "error", why }`, where `why` is one of: `room`, `peer`, `name`, `host key`, `no room`, `room taken`,
   `peer taken`, `already joined`, `join a room first`, `not here`, `to yourself`, `not yourself`,
   `host only`, `data`, `unknown type`, `not JSON`, `not a message`, `not text`, `too big`, `too many`,
-  `ice too soon`.
+  `ice too soon`; and `{ t: "error", why: "sign-in", detail }` for a pass that wasn't accepted, where
+  `detail` is `pass`, `handle`, `lookup`, `unavailable`, `too many`, `account type` (a did:web account) or
+  `refused` (never the account).
+
+## Sign-in (build step 8)
+
+A label, not a gate: rooms stay "anyone with the link". `signin.js` holds the check, `atproto-signin.js`
+wires in Bluesky's `@atproto/xrpc-server` (`verifyJwt`) and `@atproto/identity` (keys, DID documents,
+handles), loaded the first time someone joins signed in.
+
+- **The relay's identity:** `did:web:relay.rooms.thunderbird.cafe`, its DID document at
+  `GET /.well-known/did.json` (service `#rooms_relay`). Passes must be addressed to
+  `did:web:relay.rooms.thunderbird.cafe#rooms_relay` and bound to `cafe.thunderbird.rooms.join`.
+- **The check:** the pass (signature against the account's key, audience, method, expiry; only did:plc
+  accounts; at most 5 minutes; each pass once), then the handle both ways (the DID document's
+  `alsoKnownAs` names it, and DNS or https leads back to the same DID). Only then is the handle shown.
+- **Only did:plc (Oct 25):** Bluesky's identity package checks DID documents with zod, and zod 3 can run out
+  of memory on an oversized document (GHSA-mrhx-c7xc-m3w5; `npm audit` lists it, no fix for zod 3). The
+  document is looked up before the signature is checked, so a pass merely naming a did:web account would make
+  the relay fetch a document from a domain its author controls. A did:web pass is refused before any lookup
+  (`detail: "account type"`); that person joins with a typed name. did:plc documents come from plc.directory.
+  Don't run `npm audit fix --force`: it would go back to a much older `@atproto/xrpc-server`.
+- **What it keeps:** the DID of each signed-in person, in memory, while they're in the room, for two rules:
+  the host by account (a room made signed in remembers that account; signing in again as it, without the
+  host key, makes you the host) and one live connection per account (a newer join replaces the older:
+  `replaced`, `why: "account"`). Never logged, never sent to any page.
+- **Limits:** 6 sign-in checks per connection (each rejoin brings a fresh pass), 120 a minute for the whole
+  relay; messages sent while a pass is being checked wait their turn (at most 50).
+- **Without the packages** (no `npm install`), sign-in is unavailable (`detail: "unavailable"`) and rooms
+  carry on with typed names; the startup line says `sign-in ready` or `sign-in unavailable`.
 
 ## The host and the grace period
 
@@ -78,10 +112,12 @@ Relay to page:
   1012 and reconnects at once).
 - `turn.js`: TURN credentials from Cloudflare (`POST https://rtc.live.cloudflare.com/v1/turn/keys/<key
   id>/credentials/generate-ice-servers`, 4 hours), checked and trimmed; null when switched off or failing.
+- `signin.js`, `atproto-signin.js`: the relay's identity and its sign-in check (step 8).
 - `fly.toml`, `Dockerfile`, `.dockerignore`: the Fly app.
 - `test/rooms.test.mjs` (the rules, with a clock the tests move), `test/server.test.mjs` (the network
   layer over real WebSockets, and the Fly files) and `test/turn.test.mjs` (TURN: Cloudflare's answer, who
-  gets credentials, the limits, rooms carrying on without TURN).
+  gets credentials, the limits, rooms carrying on without TURN) and `test/signin.test.mjs` (the sign-in check
+  with Bluesky's real code: passes made and signed by `@atproto/crypto` keys, every refusal).
 
 ## Run the tests
 
@@ -92,9 +128,10 @@ npm install
 npm test
 ```
 
-36 tests, a few seconds. Needs Node 22 or later. The first `npm install` may refresh
-`package-lock.json` (written by hand in the chat, which has no npm registry); if it changes, it goes into
-the next commit. After that, `npm ci`.
+59 tests, a few seconds. Needs Node 22 or later. Step 8 adds Bluesky's packages (`@atproto/identity`,
+`@atproto/xrpc-server`, and `@atproto/crypto` for the tests); `package-lock.json` was written in the chat
+from Daisy's relay's lock (the chat has no npm registry), so `npm install` may refresh it: if it changes, it
+goes into the next commit. After that, `npm ci`.
 
 ## Run it locally
 
@@ -124,8 +161,8 @@ candidates); the host's grace period, 60 seconds. TURN: one ask every 10 minutes
 60 a minute for the whole relay, only from pages in a room. Without both TURN secrets, TURN is off (the
 startup line says which).
 
-**Logs:** a startup line, and now and then a counts line (`rooms 1, connections 3`). Never messages, room
-codes, names or addresses.
+**Logs:** a startup line (TURN on or off, sign-in ready or unavailable), and now and then a counts line
+(`rooms 1, connections 3`). Never messages, room codes, names, accounts or addresses.
 
 ## Deploying (the owner's step, build order step 5)
 

@@ -101,3 +101,53 @@ test('the tile\'s files: its page, scripts and style, and the two card pictures 
   assert.equal(t.sizing.width, TILES.house.sizing.width);
   assert.match(fingerprint('house'), /^memory:[0-9a-f]{24}$/);
 });
+
+// ---- Step 8: the "Rooms" permission set ----
+import { LEXICON_IDS, readLexicons } from '../scripts/publish.mjs';
+import { readFileSync as readFile } from 'node:fs';
+
+test('the permission set: title "Rooms", one rpc permission for cafe.thunderbird.rooms.join with the audience inherited, nothing else', () => {
+  assert.deepEqual(LEXICON_IDS, ['cafe.thunderbird.rooms.authJoin']);
+  const [l] = readLexicons();
+  assert.equal(l.lexicon, 1);
+  assert.equal(l.id, 'cafe.thunderbird.rooms.authJoin');
+  const main = l.defs.main;
+  assert.equal(main.type, 'permission-set');
+  assert.equal(main.title, 'Rooms');
+  assert.equal(main.detail, 'Lets rooms show your verified handle to the people in a room. Nothing in your account is read or changed.');
+  assert.deepEqual(main.permissions, [{ type: 'permission', resource: 'rpc', lxm: ['cafe.thunderbird.rooms.join'], inheritAud: true }]);
+  assert.ok(!('aud' in main.permissions[0]), 'a fixed audience isn\'t allowed inside a set');
+  assert.match(l.description, /include:cafe\.thunderbird\.rooms\.authJoin\?aud=did:web:relay\.rooms\.thunderbird\.cafe%23rooms_relay/);
+});
+
+test('the lexicon is published from the real published.json (tiles already there): only the permission set is due, then nothing', async () => {
+  const real = JSON.parse(readFile(new URL('../published.json', import.meta.url), 'utf8'));
+  const { lexicons: _done, ...before } = real;
+  const pds = createFakePds({ did: ACCOUNT, handle: 'thunderbird.cafe' });
+  const dry = await run(pds, { published: before, dryRun: true });
+  assert.deepEqual(dry.plan, [], 'no tile due');
+  assert.deepEqual(dry.lexiconsDue, LEXICON_IDS);
+  const done = await run(pds, { published: before });
+  assert.equal(done.changed, true);
+  const rec = pds.records.get('com.atproto.lexicon.schema/cafe.thunderbird.rooms.authJoin');
+  assert.equal(rec.value.$type, 'com.atproto.lexicon.schema');
+  assert.equal(rec.value.defs.main.title, 'Rooms');
+  assert.equal(done.published.lexicons['cafe.thunderbird.rooms.authJoin'].cid, rec.cid);
+  assert.equal(done.published.house.uri, before.house.uri, 'the house untouched');
+  assert.equal(done.published.poll.uri, before.poll.uri, 'the poll untouched');
+  assert.ok(!pds.calls.some((c) => c.includes('createRecord')), 'no tile record made');
+  const again = await run(pds, { published: done.published });
+  assert.equal(again.changed, false, 'nothing due the second time');
+});
+
+test('a changed permission set is put again (same key); naming a tile publishes that tile only', async () => {
+  const pds = createFakePds({ did: ACCOUNT, handle: 'thunderbird.cafe' });
+  const first = await run(pds);
+  const [l] = readLexicons();
+  const changed = { ...l, defs: { main: { ...l.defs.main, title: 'Live rooms' } } };
+  const r = await run(pds, { published: first.published, lexicons: [changed] });
+  assert.equal(r.changed, true);
+  assert.equal(pds.records.get('com.atproto.lexicon.schema/cafe.thunderbird.rooms.authJoin').value.defs.main.title, 'Live rooms');
+  const onlyPoll = await run(pds, { published: {}, only: ['poll'], dryRun: true });
+  assert.deepEqual(onlyPoll.lexiconsDue, []);
+});

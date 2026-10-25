@@ -10,6 +10,8 @@
 //   src/rooms-lab/published.generated.js    the published house tile, pinned (address and record CID, from
 //                                           published.json): the page loads exactly that version
 //   src/pages/webtiles/rooms-lab/index.astro  the page (site\index.astro)
+//   public/webtiles/rooms-lab/oauth.json    the page's sign-in description (site\oauth.json, step 8): its address is
+//                                           the page's client_id, so it must stay at this path
 //
 // Publish the house first (node scripts/publish.mjs): without published.json this script stops, so the
 // live page is never pushed without its house. Run it again after publishing a new house (--again), or
@@ -20,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 export const MODULES = ['config.js', 'formats.js', 'room-link.js', 'mesh.js', 'levels.js', 'presenting.js', 'messages.js',
-  'house-bridge.js', 'tile-records.js', 'hide-check.js', 'tile-strip.js', 'live.js', 'address.js', 'room-page.js'];
+  'house-bridge.js', 'tile-records.js', 'hide-check.js', 'tile-strip.js', 'live.js', 'address.js', 'signin.js', 'room-page.js'];
 export const SITE_FILES = ['main.js', 'page-csp.js'];
 
 const jsNote = (from) => `// COPY of rooms-lab/${from} (tested there). Edit it there, then run\n// node scripts/copy-to-site.mjs <site folder> in C:\\thunderbird-cafe\\rooms-lab to bring it here.\n\n`;
@@ -47,6 +49,8 @@ export function siteFiles(published) {
     `export const PUBLISHED = ${JSON.stringify(pinned, null, 2)};\n`;
   const astro = readFileSync(join(ROOT, 'site', 'index.astro'), 'utf8');
   files['src/pages/webtiles/rooms-lab/index.astro'] = astro.replace(/^---\r?\n/, '---\n// COPY of rooms-lab/site/index.astro: edit it there, then run copy-to-site.mjs.\n');
+  // JSON can't carry a note: this one is copied as it is (edit site\oauth.json here).
+  files['public/webtiles/rooms-lab/oauth.json'] = readFileSync(join(ROOT, 'site', 'oauth.json'), 'utf8');
   return { files, pinned };
 }
 
@@ -66,5 +70,5 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     mkdirSync(join(out, '..'), { recursive: true });
     writeFileSync(out, text);
   }
-  console.log(`Wrote ${Object.keys(built.files).length} files into ${site} (src\\rooms-lab\\ and the page), the house pinned to ${built.pinned.house.uri} (record ${built.pinned.house.cid}).`);
+  console.log(`Wrote ${Object.keys(built.files).length} files into ${site} (src\\rooms-lab\\, the page and its sign-in description), the house pinned to ${built.pinned.house.uri} (record ${built.pinned.house.cid}).`);
 }

@@ -59,7 +59,9 @@ copyFileSync(LOAD_DOMAIN_FILE, pathJoin(SITE, 'src', 'lib', 'tile-load-domain.js
 const { files } = siteFiles(pub.published);
 for (const [rel, text] of Object.entries(files)) { mkdirSync(dirname(pathJoin(SITE, rel)), { recursive: true }); writeFileSync(pathJoin(SITE, rel), text); }
 const bundle = await esbuild.build({ entryPoints: [pathJoin(SITE, 'src', 'rooms-lab', 'main.js')], bundle: true, format: 'esm', platform: 'browser',
-  write: false, logLevel: 'silent', nodePaths: [LOADER_MODULES, ...(process.env.NODE_PATH || '').split(':').filter(Boolean)] });
+  write: false, logLevel: 'silent', nodePaths: [LOADER_MODULES, ...(process.env.NODE_PATH || '').split(':').filter(Boolean)],
+  // Step 8: the page's sign-in library, as a do-nothing stand-in here (check_signin.mjs checks sign-in).
+  alias: { '@atproto/oauth-client-browser': fileURLToPath(new URL('./oauth-standin.mjs', import.meta.url)) } });
 const { pageCsp } = await import(pathJoin(SITE, 'src', 'rooms-lab', 'page-csp.js'));
 const { TILE_LOAD_DOMAIN } = await import(pathJoin(SITE, 'src', 'lib', 'tile-load-domain.js'));
 // The site's policy, with the stand-ins' addresses for the real ones (the replica is http on *.localhost; the

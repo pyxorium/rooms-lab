@@ -178,7 +178,7 @@ try {
   step('the lobby says what the lab is (honest wording)');
   await nick.page.goto(PAGE);
   const honest = await nick.page.locator('.rl-honest').textContent();
-  for (const t of ['not checked', 'Nothing is recorded', 'stores nothing', 'directly between computers when they can', "Cloudflare's relay, still encrypted", "runs on each person's own computer"]) assert.ok(honest.includes(t), t);
+  for (const t of ['\u2713 means the handle was checked through sign-in; other names are typed', 'Nothing is recorded', 'stores nothing', 'directly between computers when they can', "Cloudflare's relay, still encrypted", "runs on each person's own computer"]) assert.ok(honest.includes(t), t);
 
   step('Nick makes a room: his page holds the house, sealed (scripts only, no origin of its own), and it says it\'s ready');
   await join(nick, PAGE, 'New room');
@@ -625,10 +625,11 @@ try {
   await tileIs(guest3, 'counter1', 'no-loader');
   assert.equal(await tileCard(guest3, 'counter1').locator('.rl-tile-status').textContent(), 'This page can’t open tiles (it has no tile loader).');
 
-  step('names are shown as typed, never as markup');
+  step('names are shown as typed, never as markup, and marked unverified (step 8)');
   const sneaky = await person('<b>Bold</b>');
   await join(sneaky, PAGE, 'New room');
-  assert.equal(await sneaky.page.locator('.rl-who').first().textContent(), '<b>Bold</b>');
+  assert.equal(await sneaky.page.locator('.rl-who').first().textContent(), '<b>Bold</b> (unverified)');
+  assert.equal(await sneaky.page.locator('.rl-who .rl-unv').first().textContent(), '(unverified)');
   assert.equal(await sneaky.page.locator('.rl-who b').count(), 0);
 
   step('the house tile opened on its own shows what it is');

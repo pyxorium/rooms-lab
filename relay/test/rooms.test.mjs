@@ -340,3 +340,102 @@ test('rooms are separate: messages, lists and ending don\'t cross', () => {
   assert.deepEqual(w.take(a), []);
   assert.equal(w.rooms.stats().rooms, 1);
 });
+
+// ---- Optional sign-in (step 8): server.js hands receive() the checked account ----
+const NICK = { did: 'did:plc:nicknicknicknicknicknick', handle: 'nick.example' };
+const ROBIN = { did: 'did:plc:robinrobinrobinrobinrobi', handle: 'robin.example' };
+const joinMsg = (peer, extra = {}) => ({ t: 'join', room: ROOM, peer, name: 'typed', ...extra });
+
+test('signed in: the handle is the name, marked verified; the typed name is ignored; the account never leaves the relay', () => {
+  const w = world();
+  const host = w.conn('host');
+  const out = w.rooms.receive(host, JSON.stringify(joinMsg('peer-host-1', { create: true, name: 'Anything' })), NICK);
+  assert.deepEqual(out[0].msg, { t: 'joined', room: ROOM, peer: 'peer-host-1', host: true, verified: true, hostKey: KEY });
+  assert.deepEqual(out[1].msg.list, [{ peer: 'peer-host-1', name: 'nick.example', host: true, verified: true }]);
+  const guest = w.conn('guest');
+  const out2 = w.rooms.receive(guest, JSON.stringify(joinMsg('peer-guest-1', { name: 'Robin' })));
+  assert.deepEqual(out2[0].msg, { t: 'joined', room: ROOM, peer: 'peer-guest-1', host: false });
+  assert.deepEqual(out2.at(-1).msg.list.map((p) => [p.name, !!p.verified]), [['nick.example', true], ['Robin', false]]);
+  assert.ok(!JSON.stringify([...out, ...out2]).includes('did:plc'), 'no DID in anything sent');
+});
+
+test('a typed name can\'t start with "@" (it would look like a verified handle); a handle-looking name without "@" is just a typed name', () => {
+  const w = world();
+  const c = w.conn('a');
+  assert.deepEqual(w.say(c, joinMsg('peer-guest-1', { create: true, name: '@alice.bsky.social' }))[0].msg, { t: 'error', why: 'name' });
+  assert.deepEqual(w.say(c, joinMsg('peer-guest-1', { create: true, name: '  @x' }))[0].msg, { t: 'error', why: 'name' });
+  const ok = w.say(c, joinMsg('peer-guest-1', { create: true, name: 'alice.bsky.social' }));
+  assert.equal(ok[0].msg.t, 'joined');
+  assert.equal(ok[1].msg.list[0].verified, undefined);
+});
+
+test('the host by account: back from another device without the key; a wrong key with the right account still works; with the wrong account it doesn\'t', () => {
+  const w = world();
+  const laptop = w.conn('laptop');
+  w.rooms.receive(laptop, JSON.stringify(joinMsg('peer-laptop-1', { create: true })), NICK);
+  const robin = w.conn('robin');
+  w.say(robin, joinMsg('peer-robin-1', { name: 'Robin' }));
+  w.drop(laptop);                                                  // the host goes away (grace period)
+  w.tick(10_000);
+  const phone = w.conn('phone');
+  const back = w.rooms.receive(phone, JSON.stringify(joinMsg('peer-phone-1')), NICK);
+  assert.deepEqual(back[0].msg, { t: 'joined', room: ROOM, peer: 'peer-phone-1', host: true, verified: true, hostKey: KEY });
+  w.tick(120_000);
+  assert.deepEqual(w.rooms.sweep(), [], 'the room didn\'t end: the host came back');
+  const tablet = w.conn('tablet');
+  const wrong = w.rooms.receive(tablet, JSON.stringify(joinMsg('peer-tablet-1', { hostKey: 'x'.repeat(43) })), NICK);
+  assert.equal(wrong[0].msg.t, 'replaced', 'the phone gives way to the same account');
+  assert.equal(wrong.find((o) => o.msg?.t === 'joined').msg.host, true);
+  const other = w.conn('other');
+  const no = w.rooms.receive(other, JSON.stringify(joinMsg('peer-other-1', { hostKey: 'x'.repeat(43) })), ROBIN);
+  assert.deepEqual(no[0].msg, { t: 'error', why: 'host key' });
+});
+
+test('a room made without signing in has no host account: signing in as anyone doesn\'t make you the host', () => {
+  const w = world();
+  const host = room(w)[0];
+  const c = w.conn('c');
+  const out = w.rooms.receive(c, JSON.stringify(joinMsg('peer-guest-9')), NICK);
+  assert.equal(out[0].msg.host, false);
+  w.drop(host);
+  const c2 = w.conn('c2');
+  assert.equal(w.rooms.receive(c2, JSON.stringify(joinMsg('peer-guest-8')), ROBIN)[0].msg.host, false);
+});
+
+test('one live connection per account: a newer join replaces the older (told "account", closed), the list keeps one; a full room makes room for it', () => {
+  const w = world();
+  const [host, ...guests] = room(w, 'g1', 'g2', 'g3', 'g4');
+  const tab1 = w.conn('tab1');
+  w.rooms.receive(tab1, JSON.stringify(joinMsg('peer-tab-1')), ROBIN);              // 6 people now: full
+  w.take(tab1);
+  const tab2 = w.conn('tab2');
+  const out = w.rooms.receive(tab2, JSON.stringify(joinMsg('peer-tab-2')), ROBIN);
+  assert.deepEqual(out[0], { conn: tab1, msg: { t: 'replaced', why: 'account' } });
+  assert.deepEqual(out[1], { conn: tab1, close: { code: CLOSE.replaced, why: 'replaced' } });
+  assert.equal(out.find((o) => o.conn === tab2 && o.msg?.t === 'joined').msg.verified, true);
+  const list = out.at(-1).msg.list;
+  assert.equal(list.length, 6);
+  assert.deepEqual(list.filter((p) => p.name === 'robin.example').map((p) => p.peer), ['peer-tab-2']);
+  // The old connection is detached: it's in no room any more.
+  assert.deepEqual(w.rooms.receive(tab1, JSON.stringify({ t: 'all', data: 1 })).map((o) => o.msg), [{ t: 'error', why: 'join a room first' }]);
+  void host; void guests;
+});
+
+test('the same account rejoining with its old peer id (a reload after a blip) takes its place, not "peer taken"', () => {
+  const w = world();
+  room(w);
+  const a = w.conn('a');
+  w.rooms.receive(a, JSON.stringify(joinMsg('peer-robin-1')), ROBIN);
+  const b = w.conn('b');
+  const out = w.rooms.receive(b, JSON.stringify(joinMsg('peer-robin-1')), ROBIN);
+  assert.deepEqual(out[0].msg, { t: 'replaced', why: 'account' });
+  assert.equal(out.find((o) => o.conn === b && o.msg?.t === 'joined').msg.peer, 'peer-robin-1');
+});
+
+test('a malformed account from the server is ignored (treated as a typed join)', () => {
+  const w = world();
+  const c = w.conn('c');
+  const out = w.rooms.receive(c, JSON.stringify(joinMsg('peer-guest-1', { create: true, name: 'Robin' })), { did: 7 });
+  assert.equal(out[0].msg.verified, undefined);
+  assert.equal(out[1].msg.list[0].name, 'Robin');
+});

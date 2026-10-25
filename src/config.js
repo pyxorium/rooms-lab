@@ -33,3 +33,19 @@ export function relayUrl(loc = globalThis.location) {
   if (q && /^wss?:\/\/[^\s]+$/.test(q)) return q;
   return loc.port === SITE_DEV_PORT ? RELAY_URL : LOCAL_RELAY_URL;
 }
+
+// ---- Optional sign-in (build step 8; claude/rooms-signin-plan.md) ----
+// A label, not a gate: signing in lets the room show your verified handle; everyone else types a name.
+// The page asks only for the "Rooms" permission set (lexicons/cafe.thunderbird.rooms.authJoin.json, published
+// from thunderbird.cafe): a pass for this relay's join, nothing else in the account.
+export const RELAY_AUDIENCE = 'did:web:relay.rooms.thunderbird.cafe#rooms_relay';
+export const JOIN_LXM = 'cafe.thunderbird.rooms.join';
+export const SCOPE = `atproto include:cafe.thunderbird.rooms.authJoin?aud=${RELAY_AUDIENCE.replace('#', '%23')}`;
+// The live page's sign-in description (site/oauth.json, copied to the site's public/webtiles/rooms-lab/).
+export const PAGE_PATH = '/webtiles/rooms-lab/';
+export const CLIENT_ID = `https://thunderbird.cafe${PAGE_PATH}oauth.json`;
+// Where a typed handle is looked up (as the Foundry, Seven-Up and Daisy).
+export const SIGNIN_HANDLE_RESOLVER = 'https://bsky.social';
+/** Did the sign-in server grant the pass for this relay? (The set expands to this rpc permission.) */
+export const hasJoinScope = (scope) => String(scope || '').split(/\s+/).some((s) => s.startsWith(`rpc:${JOIN_LXM}?`) || s === `rpc:${JOIN_LXM}`)
+  || String(scope || '').includes('include:cafe.thunderbird.rooms.authJoin');

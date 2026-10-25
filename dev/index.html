@@ -12,6 +12,7 @@
   <div id="room"></div>
   <script type="module">
     import { mountRoomPage } from '/src/room-page.js';
+    import { createSignIn } from '/src/signin.js';
     // The house tile, for the host's page: here a sealed frame of tiles/house/ (no origin of its own, no
     // way out but messages to this page). On the site the tile loader gives the pinned, published house.
     // ?house=off tries a room with no house (the host approves each request).
@@ -29,8 +30,20 @@
     if (!tileHost) {
       try { tileHost = (await import('/dev/tile-host.bundle.js')).makeTileHost?.() || null; } catch { tileHost = null; }
     }
-    // For the checks and the console: window.__roomsLab.room is what the page knows right now.
-    window.__roomsLab = mountRoomPage(document.getElementById('room'), { loadHouse, tileHost });
+    // Optional sign-in (step 8): the library bundled by serve.mjs after npm install (the checks put in a
+    // stand-in). A loopback sign-in: open this page at http://127.0.0.1:5190/, not localhost.
+    let lib = window.__roomsLabSignInLib || null;
+    if (!lib) {
+      try { lib = await import('/dev/signin-lib.bundle.js'); } catch { lib = null; }
+    }
+    const signIn = createSignIn(lib);
+    const started = await signIn.start();
+    const root = document.getElementById('room');
+    if (started.finishedInWindow) root.textContent = 'Signed in. You can close this window.';
+    else if (!started.moving) {
+      // For the checks and the console: window.__roomsLab.room is what the page knows right now.
+      window.__roomsLab = mountRoomPage(root, { loadHouse, tileHost, signIn: signIn.ready() ? signIn : null });
+    }
   </script>
 </body>
 </html>

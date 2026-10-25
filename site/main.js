@@ -10,10 +10,15 @@
 //     file is checked against its content address (tile-records.js). Without it (not published, changed,
 //     or unreachable) the room falls back to "the host approves each request" and says so.
 //   - Tiles opened for everyone: the same loader, with the page's own pinned file loader.
+// And optional sign-in (step 8, signin.js): the site's @atproto/oauth-client-browser (0.5.8), with this page's
+// own sign-in description (public/webtiles/rooms-lab/oauth.json; on 127.0.0.1 a loopback one). In the small
+// sign-in window the page only finishes the sign-in and says so.
 import { TileMothership, Tile } from '@dasl/tile-loader';
+import { BrowserOAuthClient, LoginContinuedInParentWindowError } from '@atproto/oauth-client-browser';
 import { TILE_LOAD_DOMAIN } from '../lib/tile-load-domain.js';
 import { mountRoomPage } from './room-page.js';
 import { createTileRecords } from './tile-records.js';
+import { createSignIn } from './signin.js';
 import { PUBLISHED } from './published.generated.js';
 
 const HOUSE_HEIGHT = 240;
@@ -63,6 +68,16 @@ const tileHost = {
   },
 };
 
-const root = document.getElementById('room');
-// For the console: window.__roomsLab.room is what the page knows right now.
-window.__roomsLab = mountRoomPage(root, { loadHouse, tileHost, records });
+// (In a function, not top-level await: as Daisy's and Seven-Up's entry points, for the site's build target.)
+async function start() {
+  const root = document.getElementById('room');
+  const signIn = createSignIn({ BrowserOAuthClient, LoginContinuedInParentWindowError });
+  const started = await signIn.start();
+  if (started.finishedInWindow) {
+    root.textContent = 'Signed in. You can close this window.';
+  } else if (!started.moving) {
+    // For the console: window.__roomsLab.room is what the page knows right now.
+    window.__roomsLab = mountRoomPage(root, { loadHouse, tileHost, records, signIn: signIn.ready() ? signIn : null });
+  }
+}
+start();

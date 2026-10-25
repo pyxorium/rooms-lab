@@ -34,7 +34,7 @@ test('the copy: every module, the entry point, the policy, the pinned house and 
 
 test('every import inside the copy points at a file it writes (or the site\'s loader and loading domain)', () => {
   const { files } = siteFiles(PUBLISHED);
-  const outside = new Set(['@dasl/tile-loader', '../lib/tile-load-domain.js']);
+  const outside = new Set(['@dasl/tile-loader', '@atproto/oauth-client-browser', '../lib/tile-load-domain.js']);   // the site has both packages (0.5.8 for sign-in)
   for (const [path, text] of Object.entries(files)) {
     if (!path.startsWith('src/rooms-lab/') || !path.endsWith('.js')) continue;
     for (const m of text.matchAll(/^\s*(?:import|export)\s[^'"]*?from\s+'([^']+)'/gm)) {
@@ -51,4 +51,22 @@ test('the page\'s security policy: scripts only from the site, frames only from 
   assert.match(csp, /frame-src https:\/\/load\.tiles\.lexicographer\.space https:\/\/\*\.tiles\.lexicographer\.space/);
   assert.match(csp, /connect-src 'self' https: wss:/);
   assert.match(csp, /object-src 'none'/);
+});
+
+test('step 8: the sign-in description goes to public/webtiles/rooms-lab/oauth.json, as it is, and agrees with config.js', async () => {
+  const { files } = siteFiles(PUBLISHED);
+  const text = files['public/webtiles/rooms-lab/oauth.json'];
+  const meta = JSON.parse(text);
+  const { CLIENT_ID, SCOPE, PAGE_PATH } = await import('../src/config.js');
+  assert.equal(meta.client_id, CLIENT_ID);
+  assert.equal(CLIENT_ID, 'https://thunderbird.cafe/webtiles/rooms-lab/oauth.json', 'the file\'s own address is its id');
+  assert.equal(meta.scope, SCOPE);
+  assert.equal(meta.scope, 'atproto include:cafe.thunderbird.rooms.authJoin?aud=did:web:relay.rooms.thunderbird.cafe%23rooms_relay');
+  assert.deepEqual(meta.redirect_uris, [`https://thunderbird.cafe${PAGE_PATH}`]);
+  assert.equal(meta.client_uri, `https://thunderbird.cafe${PAGE_PATH}`);
+  assert.equal(meta.token_endpoint_auth_method, 'none');
+  assert.equal(meta.dpop_bound_access_tokens, true);
+  assert.equal(meta.application_type, 'web');
+  assert.ok(files['src/rooms-lab/signin.js'], 'signin.js is copied');
+  assert.match(files['src/rooms-lab/main.js'], /from '@atproto\/oauth-client-browser'/);
 });
