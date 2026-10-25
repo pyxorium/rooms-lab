@@ -174,9 +174,12 @@ Decided in `claude/rooms-signin-plan.md` (the Foundry project); the join screen 
 - **The sign-in client:** the live page's own description, `site\oauth.json` (copied to the site's
   `public\webtiles\rooms-lab\oauth.json`); on 127.0.0.1 a loopback sign-in. Every sign-in on
   thunderbird.cafe shares the library's store, filed by account only, and a new sign-in cancels that
-  account's other sign-in on the site: so signing in here signs that account out of Daisy or Seven-Up in
-  the same browser (and the reverse). The page looks first and warns only when it applies ("This will sign
-  @handle out of Daisy in this browser."); if it can't tell, it says it may. In Raku (its own site, one
+  account's other sign-in on the site: so signing in here replaces that account's Daisy or Seven-Up
+  sign-in in the same browser (and the reverse). The other page still looks signed in (it borrows this
+  sign-in, same account) but can't save until it signs in again. The page looks first and warns only when
+  it applies ("This replaces @handle's Seven-Up sign-in in this browser. Seven-Up will need you to sign in
+  again before it can save."); if it can't tell, it says it may. **Sign out** cancels only a Rooms sign-in,
+  never one Daisy or Seven-Up made later for the same account. In Raku (its own site, one
   client) this goes away.
 - **If something fails** the page says why and offers **Try again**: a handle that doesn't lead back
   ("couldn't be confirmed"), sign-in not checkable right now, too many tries, a sign-in that ran out, or a

@@ -121,3 +121,34 @@ test('the clash check: unknown when the handle or the store can\'t be read; no c
   assert.deepEqual(await down.clashFor('nick.example'), { unknown: true });
   assert.deepEqual(await down.clashFor('not a handle'), { page: null });
 });
+
+test('sign out cancels only a Rooms sign-in: if Daisy or Seven-Up signed in after Rooms (same account, same store), theirs stays', async () => {
+  const s = standIn(), storage = memory();
+  const si = createSignIn(s.lib, { loc: LIVE, storage });
+  await si.start();
+  await si.signIn('nick.example');
+  // Seven-Up signs in afterwards: the store's one sign-in for this account is now Seven-Up's.
+  s.sessions.set(NICK, 'atproto repo:cafe.thunderbird.sevenup.match');
+  await si.signOut();
+  assert.equal(si.account, null, 'signed out of Rooms');
+  assert.equal(storage.getItem(ACCOUNT_KEY), null);
+  assert.ok(!s.calls.some((c) => c[0] === 'revoke'), 'Seven-Up\'s sign-in not cancelled');
+  assert.equal(s.sessions.get(NICK), 'atproto repo:cafe.thunderbird.sevenup.match');
+  // Nothing in the store at all: nothing to cancel, still signed out.
+  const t = standIn();
+  const si2 = createSignIn(t.lib, { loc: LIVE, storage: memory() });
+  await si2.start();
+  await si2.signIn('nick.example');
+  t.sessions.delete(NICK);
+  await si2.signOut();
+  assert.equal(si2.account, null);
+  assert.ok(!t.calls.some((c) => c[0] === 'revoke'));
+});
+
+test('the warning\'s wording names the page whose sign-in would be replaced, and what that means', async () => {
+  const { clashLine } = await import('../src/room-page.js');
+  assert.equal(clashLine('nick.example', { page: 'Seven-Up' }), 'This replaces @nick.example’s Seven-Up sign-in in this browser. Seven-Up will need you to sign in again before it can save.');
+  assert.equal(clashLine('nick.example', { page: 'Daisy' }), 'This replaces @nick.example’s Daisy sign-in in this browser. Daisy will need you to sign in again before it can save or use the lounge.');
+  assert.equal(clashLine('nick.example', { page: 'another page on this site' }), 'This replaces @nick.example’s sign-in for another page on this site. That page will need you to sign in again.');
+  assert.equal(clashLine('nick.example', { unknown: true }), 'Signing in here may replace this account’s Daisy or Seven-Up sign-in in this browser. They’d need you to sign in again before saving.');
+});

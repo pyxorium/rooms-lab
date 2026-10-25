@@ -18,10 +18,12 @@
 //   first page says "You joined this room from another tab or device." with "Join here instead".
 //   An account whose handle doesn't lead back: "Your handle couldn't be confirmed…", "Try again"; then signed
 //   out, typing a name works.
-//   The clash: an account signed in to Daisy in this browser gets "This will sign @robin.test out of Daisy in
-//   this browser." before any window opens; Continue again signs in (Daisy's sign-in is gone, as for real). A
-//   handle that can't be looked up: the "may" line. No clash: no line.
-//   Kept: a reload stays signed in (no window); Sign out goes back to the two panels.
+//   The clash: an account signed in to Daisy in this browser gets "This replaces @robin.test's Daisy sign-in in
+//   this browser. Daisy will need you to sign in again before it can save or use the lounge." before any window
+//   opens; Continue again signs in (Daisy's sign-in is replaced, as for real). A handle that can't be looked up:
+//   the "may" line. No clash: no line.
+//   Kept: a reload stays signed in (no window); Sign out goes back to the two panels. Sign out after Seven-Up
+//   signed in later as the same account leaves Seven-Up's sign-in alone (only a Rooms sign-in is cancelled).
 //   A page without the sign-in library: just the name, as before step 8.
 //
 // Needs Playwright with Chromium and Bluesky's code: relay\'s npm install (@atproto/crypto, @atproto/xrpc-server),
@@ -247,18 +249,24 @@ try {
   await ann.page.waitForSelector('button.rl-signin');
   await ann.page.evaluate((did) => window.__standinPutSession(did, 'atproto include:cafe.thunderbird.daisy.authPlay'), ACCOUNTS['robin.test']);
   const popupsBefore = ann.ctx.pages().length;
-  await signInAs(ann, 'robin.test', { expectClash: 'This will sign @robin.test out of Daisy in this browser.' });
+  await signInAs(ann, 'robin.test', { expectClash: 'This replaces @robin.test\u2019s Daisy sign-in in this browser. Daisy will need you to sign in again before it can save or use the lounge.' });
   assert.match(await ann.page.evaluate((did) => window.__standinScopeOf(did), ACCOUNTS['robin.test']), /cafe\.thunderbird\.rooms\.join/);
   assert.ok(ann.ctx.pages().length <= popupsBefore + 1);
 
-  step('a handle that can\'t be looked up right now: the "may" line; a handle with no other sign-in: no line');
+  step('Sign out after Seven-Up signed in later as the same account: Rooms forgets the account, Seven-Up\'s sign-in stays');
+  await ann.page.evaluate((did) => window.__standinPutSession(did, 'atproto repo:cafe.thunderbird.sevenup.match'), ACCOUNTS['robin.test']);
   await ann.page.click('button.rl-signout');
+  await ann.page.waitForSelector('button.rl-signin');
+  assert.equal(await ann.page.evaluate((did) => window.__standinScopeOf(did), ACCOUNTS['robin.test']), 'atproto repo:cafe.thunderbird.sevenup.match', 'Seven-Up\'s sign-in untouched');
+  assert.ok(!(await log(ann)).some((l) => l[0] === 'revoke'), 'nothing cancelled');
+
+  step('a handle that can\'t be looked up right now: the "may" line; a handle with no other sign-in: no line');
   await ann.page.click('button.rl-signin');
   await ann.page.fill('.rl-handle', 'offline.test');
   await ann.page.waitForTimeout(600);
   await ann.page.click('button.rl-continue');
   await until(ann, () => !!document.querySelector('.rl-clash')?.textContent);
-  assert.equal(await text(ann, '.rl-clash'), 'Signing in here may sign this account out of Daisy or Seven-Up in this browser.');
+  assert.equal(await text(ann, '.rl-clash'), 'Signing in here may replace this account\u2019s Daisy or Seven-Up sign-in in this browser. They\u2019d need you to sign in again before saving.');
   await ann.page.fill('.rl-handle', 'nick.test');
   assert.equal(await text(ann, '.rl-clash'), '', 'typing again clears it');
 
@@ -270,6 +278,8 @@ try {
   await other.page.click('button.rl-signout');
   await other.page.waitForSelector('button.rl-signin');
   assert.equal(await other.page.locator('.rl-name').count(), 1);
+  assert.ok((await log(other)).some((l) => l[0] === 'revoke'), 'its own (Rooms) sign-in is cancelled');
+  assert.equal(await other.page.evaluate((did) => window.__standinScopeOf(did), ACCOUNTS['nick.test']), null);
 
   step('no page ever received an account\'s DID from the relay');
   for (const p of [nick, robin, other, dee]) for (const f of p.frames) for (const did of Object.values(ACCOUNTS)) assert.ok(!f.includes(did), `${p.name} got a DID`);

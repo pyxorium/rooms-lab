@@ -123,6 +123,15 @@ export const NET_NOTES = {
   turnOnlyNone: "Test switch on (turn=only), but the TURN relay isn't available, so this page can't connect to anyone.",
 };
 
+// The clash line (owner's wording, Oct 25): the other page still looks signed in afterwards (it borrows this
+// sign-in), so say what really changes: it will need a new sign-in before it can save.
+export function clashLine(hd, r) {
+  if (r.unknown) return 'Signing in here may replace this account\u2019s Daisy or Seven-Up sign-in in this browser. They\u2019d need you to sign in again before saving.';
+  if (r.page === 'Daisy') return `This replaces @${hd}\u2019s Daisy sign-in in this browser. Daisy will need you to sign in again before it can save or use the lounge.`;
+  if (r.page === 'Seven-Up') return `This replaces @${hd}\u2019s Seven-Up sign-in in this browser. Seven-Up will need you to sign in again before it can save.`;
+  return `This replaces @${hd}\u2019s sign-in for another page on this site. That page will need you to sign in again.`;
+}
+
 export function mountRoomPage(root, options = {}) {
   const o = { ...DEFAULTS, ...options };
   const url = o.relayUrl || relayUrl(o.loc);
@@ -244,9 +253,7 @@ export function mountRoomPage(root, options = {}) {
       if (!checks.has(hd)) checks.set(hd, si.clashFor(hd).catch(() => ({ unknown: true })).then((r) => { settled.set(hd, r); return r; }));
       return checks.get(hd);
     };
-    const clashText = (hd, r) => (r.unknown
-      ? 'Signing in here may sign this account out of Daisy or Seven-Up in this browser.'
-      : `This will sign @${hd} out of ${r.page} in this browser.`);
+    const clashText = (hd, r) => clashLine(hd, r);
     function opened() {
       onOpen(true);
       const box = h('input', { class: 'rl-handle', type: 'text', autocomplete: 'username', spellcheck: 'false', autocapitalize: 'none', placeholder: 'alice.bsky.social', 'aria-label': 'Your handle' });

@@ -12,9 +12,11 @@
 // new window. createSignIn takes the library's exports, so the browser checks can hand in a stand-in.
 //
 // The clash (decision 2): every sign-in on one site shares the library's store, filed by account only, and
-// a new sign-in cancels that account's other sign-in on the site first. So signing in here signs that account
-// out of Daisy or Seven-Up in this browser (and the reverse). clashFor() looks in that store, before the
-// sign-in window opens, so the page warns only when it applies; when the store can't be read it says it may.
+// a new sign-in cancels that account's other sign-in on the site first. So signing in here replaces that
+// account's Daisy or Seven-Up sign-in in this browser (and the reverse). The other page still looks signed in
+// (it borrows this sign-in, same account), but can't save until it signs in again (checked with the real
+// library, Oct 25). clashFor() looks in that store, before the sign-in window opens, so the page warns only
+// when it applies; when the store can't be read it says it may. Sign out cancels only a Rooms sign-in.
 import { CLIENT_ID, SCOPE, RELAY_AUDIENCE, JOIN_LXM, SIGNIN_HANDLE_RESOLVER, hasJoinScope, isLocal } from './config.js';
 
 const WINDOW_NAME = 'rooms-lab-signin';
@@ -169,10 +171,16 @@ export function createSignIn(lib, {
       return body.token;
     },
 
+    // Sign out. The store is shared by the whole site and keeps one sign-in per account, so the one there now
+    // may belong to Daisy or Seven-Up (signed in after Rooms). Cancel it only if it's a Rooms sign-in (it holds
+    // the Rooms permission); otherwise just forget the account here and leave the other page's sign-in alone.
     async signOut() {
       const did = account?.did;
       session = null; account = null; keep(null); changed();
-      if (did) { try { await client.revoke(did); } catch { /* already gone */ } }
+      if (!did) return;
+      let ours = false;
+      try { ours = hasJoinScope(await scopeOf(await client.restore(did))); } catch { /* nothing there: nothing to cancel */ }
+      if (ours) { try { await client.revoke(did); } catch { /* already gone */ } }
     },
     forget() { session = null; account = null; keep(null); changed(); },
 
