@@ -19,6 +19,11 @@
 // (and "Stop sharing live" once it is); on a guest's card, "Ask to share live". Every card of a live tile
 // says "Shared live with the room". The strip tells the room page which frame is which tile (frameOf,
 // uriOfSource) and when a copy is gone (onRemoved).
+//
+// The stage (step 9): one shared tile at a time can be on the stage. Its card is never moved either: the room
+// page lays it over the stage's box (`elementOf`), and a slim line keeps its place in the list ("Tile Poll: on
+// the stage ↑"). On the stage the card shows the page's own "Tile" badge, the host's "Take off stage" (or "Back
+// to screen" while someone shares a screen) and "Full screen"; off it, the host's "Put on stage".
 import { parseTileUri } from './tile-records.js';
 
 export const MAX_TILES = 6;
@@ -27,11 +32,13 @@ const PREVIEW_NOTE = 'Only you can see this (unless you’re sharing your whole 
 export const sizeText = (n) => (!(n > 0) ? '' : n < 1024 ? `${n} bytes` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
 const NO_LIVE = { info: () => ({ spoke: false, live: false, asking: false }), share: () => {}, stop: () => {}, ask: () => {} };
+const NO_STAGE = { put: () => {}, off: () => {}, offLabel: () => 'Take off stage', full: null };
 
 export function createTileStrip({ mount, records, hide, tileHost = null, h, nameOf = () => 'Someone', isHost = () => false,
-  onCloseForEveryone = () => {}, onNote = () => {}, live = NO_LIVE, onRemoved = () => {} }) {
+  onCloseForEveryone = () => {}, onNote = () => {}, live = NO_LIVE, onRemoved = () => {}, stage = NO_STAGE, onUpdate = () => {} }) {
   const entries = new Map();      // uri → { uri, cid, by, private, el, … }
   const dismissed = new Set();    // `${uri} ${cid}` this person hid
+  let staged = null;              // the tile on the stage (its address), or null
 
   const setState = (e, state, text) => {
     e.state = state;
@@ -39,6 +46,7 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     if (text !== undefined) e.status.textContent = text;
     e.status.hidden = state === 'open';
     paintButtons(e);
+    onUpdate(e.uri);
   };
 
   function card(t) {
@@ -53,25 +61,39 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     const notice = h('p', { class: 'rl-tile-private' }, PREVIEW_NOTE);
     const note = h('p', { class: 'rl-tile-note', role: 'status' });
     const liveBadge = h('p', { class: 'rl-tile-live', hidden: true }, 'Shared live with the room');
+    // The page's own label while the card is on the stage: a tile can't change it (it's outside the tile's frame).
+    const stageBadge = h('span', { class: 'rl-stage-badge rl-stage-badge-tile', hidden: true }, 'Tile');
     const el = h('li', { class: 'rl-tile', 'data-uri': t.uri },
-      h('div', { class: 'rl-tile-head' }, h('span', { class: 'rl-tile-who' }, title, author, size, byEl), actions),
+      h('div', { class: 'rl-tile-head' }, h('span', { class: 'rl-tile-who' }, stageBadge, title, author, size, byEl), actions),
       liveBadge, notice, desc, status, note, body);
-    return { el, title, author, size, desc, byEl, status, body, actions, notice, note, liveBadge };
+    return { el, title, author, size, desc, byEl, status, body, actions, notice, note, liveBadge, stageBadge };
   }
 
   // The buttons on a card: a preview's come from the room page; a shared tile's are Hide for me and the
   // host's Close for everyone. A preview's buttons marked `needsOpen` wait until the tile is running.
   function sharedButtons(e) {
     const info = () => live.info(e.uri);
+    const on = () => staged === e.uri;
     return [
+      { text: 'Put on stage', cls: 'rl-primary rl-tile-stage-on', hidden: () => !isHost() || on(), onclick: () => stage.put(e.uri) },
+      { text: 'Take off stage', label: () => stage.offLabel(), cls: 'rl-tile-stage-off', hidden: () => !isHost() || !on(), onclick: () => stage.off() },
+      { text: 'Full screen', label: () => (fullNow() === e.el ? 'Exit full screen' : 'Full screen'), cls: 'rl-tile-full',
+        hidden: () => !on() || !stage.full?.(e.el), onclick: () => toggleFull(e) },
       { text: 'Share live with the room', cls: 'rl-primary rl-tile-live-on', hidden: () => !isHost() || !info().spoke || info().live,
         disabled: () => info().asking, onclick: () => live.share(e.uri) },
       { text: 'Ask to share live', cls: 'rl-tile-live-ask', hidden: () => isHost() || !info().spoke || info().live,
         disabled: () => info().asking, onclick: () => live.ask(e.uri) },
       { text: 'Stop sharing live', cls: 'rl-tile-live-off', hidden: () => !isHost() || !info().live, onclick: () => live.stop(e.uri) },
-      { text: 'Hide for me', cls: 'rl-tile-hide', onclick: () => { dismissed.add(`${e.uri} ${e.cid}`); remove(e.uri); } },
+      // The host takes a tile off the stage instead (hiding it would leave them nothing to take off).
+      { text: 'Hide for me', cls: 'rl-tile-hide', hidden: () => isHost() && on(), onclick: () => { dismissed.add(`${e.uri} ${e.cid}`); remove(e.uri); } },
       { text: 'Close for everyone', cls: 'rl-tile-close rl-danger', hidden: () => !isHost(), onclick: () => onCloseForEveryone(e.uri) },
     ];
+  }
+  const fullNow = () => (typeof document === 'undefined' ? null : document.fullscreenElement || document.webkitFullscreenElement || null);
+  function toggleFull(e) {
+    if (fullNow() === e.el) { try { (document.exitFullscreen || document.webkitExitFullscreen)?.call(document); } catch { /* fine */ } return; }
+    const go = stage.full?.(e.el);
+    if (go) Promise.resolve().then(go).catch(() => onNote('full screen wasn\u2019t allowed'));
   }
   function setButtons(e, list) {
     e.buttons = list.map((b) => ({ ...b, el: h('button', { type: 'button', class: b.cls || '', onclick: () => b.onclick(e) }, b.text) }));
@@ -83,12 +105,15 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     e.el.classList.toggle('rl-tile-is-live', !e.liveBadge.hidden);
     for (const b of e.buttons || []) {
       b.el.hidden = !!b.hidden?.();
+      if (b.label) b.el.textContent = b.label();
       b.el.disabled = (b.needsOpen && e.state !== 'open') || !!b.disabled?.();
     }
   }
 
   function describe(e, rec) {
     e.title.textContent = rec.name;
+    if (e.placeholder) e.placeholder.replaceChildren(...placeholderWords(rec.name));
+    onUpdate(e.uri);
     e.author.textContent = `by ${rec.did}`;
     e.author.title = rec.did;
     records.checkedHandle?.(rec.did).then((handle) => { if (handle && entries.get(e.uri) === e) e.author.textContent = `by @${handle}`; });
@@ -148,6 +173,7 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     e.notice.hidden = !e.private;
     setButtons(e, e.private ? t.buttons : sharedButtons(e));
     mount.prepend(e.el);                 // newest first
+    if (!e.private && e.uri === staged) setStaged(staged);
     open(e);
     return e;
   }
@@ -163,6 +189,7 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     e.desc.textContent = '';
     e.byEl.textContent = `opened by ${nameOf(t.by)}`;
     setButtons(e, sharedButtons(e));
+    setStaged(staged);
   }
 
   function show(t) {
@@ -182,18 +209,42 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     return add({ uri, cid, private: true, buttons });
   }
 
+  // The slim line that keeps a staged card's place in the list (inserted next to it: the card itself never moves).
+  const placeholderWords = (name) => [h('span', { class: 'rl-stage-badge rl-stage-badge-tile' }, 'Tile'), ' ', h('span', { class: 'rl-tile-name' }, name || 'A tile'), ': on the stage \u2191'];
+  function setStaged(uri) {
+    staged = uri || null;
+    for (const e of entries.values()) {
+      const on = !e.private && e.uri === staged;
+      e.el.classList.toggle('rl-tile-on-stage', on);
+      e.stageBadge.hidden = !on;
+      if (on && !e.placeholder) {
+        e.placeholder = h('li', { class: 'rl-tile-placeholder', 'data-uri': e.uri }, ...placeholderWords(e.rec?.name));
+        e.el.before(e.placeholder);
+      } else if (!on && e.placeholder) { e.placeholder.remove(); e.placeholder = null; }
+      if (!on) for (const k of ['position', 'top', 'left', 'width', 'height']) e.el.style.removeProperty(k);
+      paintButtons(e);
+    }
+  }
+
   function remove(uri) {
     const e = entries.get(uri);
     if (!e) return;
     entries.delete(uri);
     e.attempt++;
+    e.placeholder?.remove();
+    e.placeholder = null;
     e.el.remove();
     e.frame = null;
     onRemoved(uri);
   }
 
   return {
-    show, preview, remove,
+    show, preview, remove, setStaged,
+    /** The card's element (the room page lays the staged one over the stage), or null. */
+    elementOf: (uri) => entries.get(uri)?.el ?? null,
+    /** Did this person hide that tile ("Hide for me")? */
+    wasHidden: (uri) => [...dismissed].some((k) => k.startsWith(`${uri} `)),
+    by: (uri) => entries.get(uri)?.by ?? null,
     /** The buttons follow who's host, who's asking, and whether the tile is running. */
     refresh() { for (const e of entries.values()) paintButtons(e); },
     /** A line under a preview's status ("Asked the host…"). */

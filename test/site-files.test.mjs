@@ -51,6 +51,12 @@ test('the page\'s security policy: scripts only from the site, frames only from 
   assert.match(csp, /frame-src https:\/\/load\.tiles\.lexicographer\.space https:\/\/\*\.tiles\.lexicographer\.space/);
   assert.match(csp, /connect-src 'self' https: wss:/);
   assert.match(csp, /object-src 'none'/);
+  assert.match(csp, /img-src 'self' blob: data: https:\/\/cdn\.bsky\.app(;|$)/, 'step 9: the suggestions\' avatars, from Bluesky\'s picture server only');
+});
+
+test('step 9: the stage and the handle suggestions are copied too', () => {
+  const { files } = siteFiles(PUBLISHED);
+  for (const m of ['stage.js', 'typeahead.js']) assert.match(files[`src/rooms-lab/${m}`] || '', /^\/\/ COPY of rooms-lab\/src\//, m);
 });
 
 test('step 8: the sign-in description goes to public/webtiles/rooms-lab/oauth.json, as it is, and agrees with config.js', async () => {

@@ -44,6 +44,13 @@
 // effect on the next join. The host signed in can come back by account (another device, no host key); one live
 // connection per account (an older tab hears "You joined this room from another tab or device"). The house
 // learns only verified yes/no per person; tiles learn nothing about it.
+//
+// The stage (step 9; stage.js; claude/rooms-lab-step9.md): one thing at a time, a screen or a tile, in a box that
+// keeps one size. The host's page decides which tile is on it (tiles the host opens go there at once; anyone
+// else's goes to the list, and the host can "Put on stage") and tells everyone; a newcomer learns it with the
+// tile list. A new screen share takes the stage back. The page's own badge says "Screen" or "Tile" (a tile names
+// itself, so it can't pass for a screen). A staged tile's card is laid over the stage, never moved (a browser
+// reloads a frame that moves). Handle suggestions in the sign-in box (typeahead.js, Raku's copy).
 import { connectRoom } from './room-link.js';
 import { createMesh } from './mesh.js';
 import { createLevels } from './levels.js';
@@ -58,6 +65,8 @@ import { createTileStrip, MAX_TILES } from './tile-strip.js';
 import { relayUrl, ICE_SERVERS, TIMES } from './config.js';
 import { createLiveTiles, readPeerLive } from './live.js';
 import { parseAddress, HINT } from './address.js';
+import { whatsOnStage, afterPresenterChange, stageLines, EMPTY_LINE, EMPTY_HINT_HOST, EMPTY_HINT_GUEST, fullScreenCall, fullScreenNow, leaveFullScreen } from './stage.js';
+import { attachTypeahead } from './typeahead.js';
 
 export const h = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -112,6 +121,8 @@ const DEFAULTS = {
   activation: () => !!globalThis.navigator?.userActivation?.isActive,
   // Optional sign-in (signin.js createSignIn, already started), or null: typed names only.
   signIn: null,
+  // Handle suggestions in the sign-in box (typeahead.js): the fetch they use (the checks swap it); null: none.
+  suggestFetch: globalThis.fetch ? (...a) => globalThis.fetch(...a) : null,
 };
 
 const get = (s, k) => { try { return s?.getItem(k) ?? null; } catch { return null; } };
@@ -262,11 +273,12 @@ export function mountRoomPage(root, options = {}) {
       const cont = h('button', { type: 'button', class: 'rl-primary rl-continue' }, 'Continue');
       const cancel = h('button', { type: 'button', class: 'rl-link rl-cancel', onclick: () => { abort?.abort(); closed(); } }, 'Cancel');
       let timer = null;
+      const fresh = () => { clash.textContent = ''; status.textContent = ''; warned = null; clearTimeout(timer); };
       box.addEventListener('input', () => {
-        clash.textContent = ''; status.textContent = ''; warned = null;
-        clearTimeout(timer);
+        fresh();
         const hd = cleanHandle(box.value);
-        if (hd) timer = setTimeout(() => check(hd), 400);       // looked up while typing, so Continue knows at once
+        // Looked up once typing pauses (or a suggestion is picked), so Continue knows at once.
+        if (hd) timer = setTimeout(() => check(hd), 700);
       });
       async function go() {
         const hd = cleanHandle(box.value);
@@ -296,8 +308,17 @@ export function mountRoomPage(root, options = {}) {
       }
       cont.addEventListener('click', go);
       box.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      // Handle suggestions (step 9): in this box only, never in the typed-name box.
+      const holder = h('span', { class: 'rl-ta-holder' }, box);
+      if (o.suggestFetch) {
+        attachTypeahead(box, holder, { id: 'rl-signin-ta', fetchImpl: o.suggestFetch, onChoose: (hd) => {
+          box.value = hd; fresh();
+          const c = cleanHandle(hd);
+          if (c) check(c);
+        } });
+      }
       panel.replaceChildren(
-        h('label', { class: 'rl-field' }, h('span', {}, 'Your handle'), h('span', { class: 'rl-row' }, box, cont)),
+        h('label', { class: 'rl-field' }, h('span', {}, 'Your handle'), h('span', { class: 'rl-row' }, holder, cont)),
         clash, help(), status, cancel);
       box.focus();
     }
@@ -325,6 +346,7 @@ export function mountRoomPage(root, options = {}) {
       approvals: new Map(),        // the host's page only: `${from} ${id}` → { from, w, reason, timer }
       hostWishes: new Map(),       // the host's page only: asker → their wish being decided (one at a time)
       roomTiles: [],               // the host's page only: the tiles open for everyone, [{ uri, cid, by, live? }]
+      stageTile: null,             // the tile on the stage (every page; the host's page decides), or null
       wasHost: false,              // the host flag last time we joined (the live hub follows it)
       ice: { state: 'waiting', servers: null, at: 0 },   // TURN (step 7): 'waiting' | 'on' | 'off' | 'unavailable'
       iceTimers: [],
@@ -347,7 +369,20 @@ export function mountRoomPage(root, options = {}) {
         ask: (uri) => wish('live', null, uri),
         stop: (uri) => liveForEveryone(uri, false),
       },
-      onRemoved: (uri) => r.live?.removed(uri),
+      onRemoved: (uri) => { r.live?.removed(uri); renderStage(); },
+      stage: {
+        put: (uri) => setStage(uri),
+        off: () => setStage(null),
+        offLabel: () => (r.presenter ? 'Back to screen' : 'Take off stage'),
+        full: (el) => fullScreenCall(el),
+      },
+      onUpdate: (uri) => {
+        if (uri !== r.stageTile) return;
+        // The tile's name arrives with its record: finish the status line that went out without it.
+        const name = r.strip.name(uri);
+        if (name && r.stageSaid?.uri === uri && r.els.status.textContent === stageLines.put(r.stageSaid.who, null)) say(stageLines.put(r.stageSaid.who, name));
+        renderStage();
+      },
     });
     r.mesh = createMesh({
       iceServers: o.iceServers, RTCPeerConnectionImpl: o.RTCPeerConnectionImpl,
@@ -389,6 +424,15 @@ export function mountRoomPage(root, options = {}) {
     // Connections wait a moment for the relay's TURN credentials, then start without them if need be.
     r.iceTimers.push(setTimeout(() => { if (room === r && !r.mesh.iceReady) useIce(null); }, o.times.iceWaitMs ?? 4000));
     r.iceTimers.push(setInterval(() => checkRoutes(), 3000));
+    // The staged card follows the stage's box wherever the page's layout puts it.
+    r.placer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => placeStaged()) : null;
+    r.placer?.observe(els.section);
+    r.placer?.observe(els.stage);
+    r.onResize = () => placeStaged();
+    globalThis.addEventListener?.('resize', r.onResize);
+    r.onFull = () => { renderStage(); r.strip.refresh(); };
+    globalThis.document?.addEventListener('fullscreenchange', r.onFull);
+    globalThis.document?.addEventListener('webkitfullscreenchange', r.onFull);
     renderNet();
     say('Connecting to the room…');
     render();
@@ -456,8 +500,16 @@ export function mountRoomPage(root, options = {}) {
     els.leave = h('button', { type: 'button', onclick: () => leave('You left the room.') }, 'Leave');
     els.video = h('video', { class: 'rl-video', autoplay: true, playsinline: true, muted: true, hidden: true });
     els.video.muted = true;
-    els.caption = h('p', { class: 'rl-caption' });
-    els.stage = h('div', { class: 'rl-stage' }, els.video, els.caption);
+    // The stage keeps one size (step 9): a bar (the page's own "Screen" / "Tile" badge, what's on, Full screen)
+    // over a 16:9 area (the screen, or the messages when nothing's on). A staged tile's card is laid over both.
+    els.stageBadge = h('span', { class: 'rl-stage-badge', hidden: true });
+    els.caption = h('span', { class: 'rl-caption' });
+    els.full = h('button', { type: 'button', class: 'rl-stage-full', hidden: true, onclick: () => toggleScreenFull() }, 'Full screen');
+    els.emptyLine = h('p', { class: 'rl-stage-line' });
+    els.emptyHint = h('p', { class: 'rl-stage-hint' });
+    els.empty = h('div', { class: 'rl-stage-empty' }, els.emptyLine, els.emptyHint);
+    els.area = h('div', { class: 'rl-stage-area' }, els.video, els.empty);
+    els.stage = h('div', { class: 'rl-stage' }, h('div', { class: 'rl-stage-bar' }, els.stageBadge, els.caption, els.full), els.area);
     els.mic = h('button', { type: 'button', class: 'rl-mic', 'aria-pressed': 'false', onclick: () => toggleMic() }, 'Unmute');
     // While "The host said you can present" is open, Share my screen does what its button does (the picker).
     els.share = h('button', { type: 'button', class: 'rl-share', onclick: () => (r.screenTrack ? stopShare('You stopped sharing.') : r.prompt?.type === 'go' ? startShare(r.prompt) : wish('present')) }, 'Share my screen');
@@ -587,7 +639,7 @@ export function mountRoomPage(root, options = {}) {
     // Someone new: tell them who's presenting, and (the host) which tiles are open (they missed it).
     const newcomers = list.filter((p) => !was.has(p.peer) && p.peer !== r.me && !p.away);
     if (r.screenTrack && newcomers.length) r.link.all({ kind: 'presenting', on: true });
-    if (r.host && r.roomTiles.length) for (const p of newcomers) r.link.to(p.peer, { kind: 'tiles', list: r.roomTiles });
+    if (r.host && r.roomTiles.length) for (const p of newcomers) r.link.to(p.peer, { kind: 'tiles', list: tilesList() });   // with the stage
     // Wishes, prompts and approvals about people who've gone.
     for (const [id, w] of r.wishes) if (w.target && !here.includes(w.target)) dropWish(id, `${nameOf(w.target)} left.`);
     if (r.prompt?.type === 'ask' && !here.includes(r.prompt.from)) closePrompt();
@@ -612,21 +664,27 @@ export function mountRoomPage(root, options = {}) {
     if (m.kind === 'presenting') {
       const next = afterAnnounce(r.presenter, from, m.on);
       if (r.screenTrack && next !== r.me) { r.presenter = next; stopShare(`${nameOf(next)} started presenting at the same moment, so your share stopped.`, { tell: false }); }
-      else if (next !== r.presenter && next !== r.me) say(next ? `${nameOf(next)} is presenting.` : `${nameOf(from)} stopped presenting.`);
+      else if (next !== r.presenter && next !== r.me) say(next ? stageLines.sharing(nameOf(next)) : `${nameOf(from)} stopped sharing their screen.`);
+      const before = r.presenter;
       r.presenter = next;
+      if (r.host) hostPresenterChanged(before, next);
       render();
     } else if (m.kind === 'wish') {
       if (!r.host) return;
       handleWish(from, m);
-    } else if (['wish-result', 'go-ahead', 'ask-screen', 'tile', 'tiles', 'tile-close', 'tile-live'].includes(m.kind)) {
+    } else if (['wish-result', 'go-ahead', 'ask-screen', 'tile', 'tiles', 'tile-close', 'tile-live', 'stage'].includes(m.kind)) {
       if (from !== hostPeer()?.peer) { note('!', from, `${m.kind} not from the host: ignored`); return; }
       if (m.kind === 'wish-result') wishResult(m.id, m.decision, m.reason);
       else if (m.kind === 'go-ahead') goAhead(m.id);
       else if (m.kind === 'ask-screen') askedForScreen(m.asker, m.id);
       else if (m.kind === 'tile') tileOpened(m);
-      else if (m.kind === 'tiles') { m.list.forEach((t) => { r.strip.show(t); if (t.live) r.live.setLive(t.uri, true); }); r.live.hostConnected(); }
-      else if (m.kind === 'tile-live') r.live.setLive(m.uri, m.on);
-      else { r.live.setLive(m.uri, false); r.strip.remove(m.uri); }
+      else if (m.kind === 'tiles') {
+        m.list.forEach((t) => { r.strip.show(t); if (t.live) r.live.setLive(t.uri, true); });
+        r.live.hostConnected();
+        followStage(m.list.find((t) => t.stage)?.uri || null, { quiet: true });
+      } else if (m.kind === 'tile-live') r.live.setLive(m.uri, m.on);
+      else if (m.kind === 'stage') followStage(m.uri);
+      else { r.live.setLive(m.uri, false); r.strip.remove(m.uri); if (r.stageTile === m.uri) followStage(null, { quiet: true }); }
     } else if (m.kind === 'ask-answer') {
       const w = r.wishes.get(m.id);
       if (!w || w.wish !== 'see-screen' || w.target !== from) return;
@@ -645,6 +703,7 @@ export function mountRoomPage(root, options = {}) {
     tiles: () => `tiles (${m.list.length})`,
     'tile-close': () => `tile-close ${m.uri.split('/').pop()}`,
     'tile-live': () => `tile-live ${m.on ? 'on' : 'off'} ${m.uri.split('/').pop()}`,
+    stage: () => `stage ${m.uri ? m.uri.split('/').pop() : 'none'}`,
   }[m.kind] || (() => m.kind))();
 
   const whose = (peer) => (peer === room?.me ? 'your' : `${nameOf(peer)}\u2019s`);
@@ -911,17 +970,26 @@ export function mountRoomPage(root, options = {}) {
   function openForEveryone(t) {
     const r = room;
     r.roomTiles.push(t);
-    put(o.session, tilesKey(r.code), JSON.stringify(r.roomTiles));
+    saveTiles();
     r.link.all({ kind: 'tile', ...t });
     note('\u2192', null, `tile ${t.uri.split('/').pop()} (opened by ${nameOf(t.by)})`);
     tileOpened(t);
+    if (t.by === r.me) setStage(t.uri);          // the host's own tile goes on the stage; anyone else's to the list
   }
+
+  // The host's page keeps its tiles (and which one is on the stage) for a reload of this tab.
+  function saveTiles() {
+    const r = room;
+    put(o.session, tilesKey(r.code), JSON.stringify(tilesList()));
+  }
+  const tilesList = () => room.roomTiles.map((t) => ({ ...t, ...(t.uri === room.stageTile ? { stage: true } : {}) }));
 
   function closeForEveryone(uri) {
     const r = room;
     if (!r?.host) return;
     r.roomTiles = r.roomTiles.filter((t) => t.uri !== uri);
-    put(o.session, tilesKey(r.code), JSON.stringify(r.roomTiles));
+    if (r.stageTile === uri) { r.stageTile = null; r.strip.setStaged(null); }   // every page clears it on tile-close
+    saveTiles();
     r.link.all({ kind: 'tile-close', uri });
     note('\u2192', null, `tile-close ${uri.split('/').pop()}`);
     r.live.setLive(uri, false);
@@ -935,18 +1003,86 @@ export function mountRoomPage(root, options = {}) {
     const t = r.roomTiles.find((x) => x.uri === uri);
     if (!t || !!t.live === on) return;
     if (on) t.live = true; else delete t.live;
-    put(o.session, tilesKey(r.code), JSON.stringify(r.roomTiles));
+    saveTiles();
     r.link.all({ kind: 'tile-live', uri, on });
     note('\u2192', null, `tile-live ${on ? 'on' : 'off'} ${uri.split('/').pop()}`);
     r.live.setLive(uri, on);
     say(on ? 'Shared live with the room.' : 'Stopped sharing live. Each copy keeps what it has.');
   }
 
-  // A tile opened for everyone: into the strip; if whoever opened it was presenting, the tile takes the stage.
+  // A tile opened for everyone: into the strip (the host's page then decides whether it goes on the stage).
   function tileOpened(t) {
+    room.strip.show(t);
+  }
+
+  // ---- The stage (step 9) ----
+  // The host's page: put a tile on the stage (or none), and tell everyone.
+  function setStage(uri) {
     const r = room;
-    r.strip.show(t);
-    if (t.by === r.me && r.screenTrack) stopShare('Your share stopped: the tile takes over the stage.');
+    if (!r?.host) return;
+    if (uri && !r.roomTiles.some((t) => t.uri === uri)) return;
+    if (uri === r.stageTile) return;
+    const was = r.stageTile;
+    r.stageTile = uri;
+    saveTiles();
+    r.link.all({ kind: 'stage', uri });
+    note('\u2192', null, `stage ${uri ? uri.split('/').pop() : 'none'}`);
+    stageChanged(was, 'You');
+  }
+  // Every other page: follow the host's page.
+  function followStage(uri, { quiet = false } = {}) {
+    const r = room;
+    if (uri === r.stageTile) return;
+    const was = r.stageTile;
+    r.stageTile = uri;
+    stageChanged(was, shown(hostPeer()), { quiet });
+  }
+  function stageChanged(was, who, { quiet = false } = {}) {
+    const r = room;
+    r.strip.setStaged(r.stageTile);
+    r.stageSaid = null;
+    if (!quiet) {
+      if (r.stageTile) { say(stageLines.put(who, r.strip.name(r.stageTile))); r.stageSaid = { uri: r.stageTile, who }; }
+      else if (r.presenter) say(stageLines.back(r.presenter === r.me ? 'your' : `${nameOf(r.presenter)}\u2019s`));
+      else say(stageLines.left(was ? r.strip.name(was) : null));
+    }
+    render();
+  }
+  // The host's page: someone new started sharing a screen, so the screen takes the stage.
+  function hostPresenterChanged(before, after) {
+    const r = room;
+    const next = afterPresenterChange(r.stageTile, before, after);
+    if (next !== r.stageTile) {
+      r.stageTile = next;
+      saveTiles();
+      r.link.all({ kind: 'stage', uri: next });
+      note('\u2192', null, 'stage none (a screen is shared)');
+      r.strip.setStaged(next);
+    }
+  }
+
+  // Lay the staged tile's card over the stage's box (the card stays where it is in the page: never moved).
+  function placeStaged() {
+    const r = room;
+    if (!r) return;
+    const el = r.stageTile ? r.strip.elementOf(r.stageTile) : null;
+    if (!el) return;
+    const box = r.els.stage.getBoundingClientRect();
+    const base = r.els.section.getBoundingClientRect();
+    const px = (n) => `${Math.round(n)}px`;
+    el.style.position = 'absolute';
+    el.style.top = px(box.top - base.top);
+    el.style.left = px(box.left - base.left);
+    el.style.width = px(box.width);
+    el.style.height = px(box.height);
+  }
+
+  function toggleScreenFull() {
+    const r = room;
+    const doc = r.els.stage.ownerDocument;
+    if (fullScreenNow(doc) === r.els.stage) { leaveFullScreen(doc); return; }
+    const go = fullScreenCall(r.els.stage, r.els.video);
+    if (go) Promise.resolve().then(go).catch(() => say('Full screen wasn\u2019t allowed.'));
   }
 
   // The host back after a reload (or a relay restart): the tiles they had open, for everyone again. A reload
@@ -957,14 +1093,23 @@ export function mountRoomPage(root, options = {}) {
     if (!r.roomTiles.length) {
       try { const kept = JSON.parse(get(o.session, tilesKey(r.code)) || '[]'); if (Array.isArray(kept)) r.roomTiles = kept.filter((t) => t && parseTileUri(t.uri) && t.cid).slice(0, MAX_TILES); } catch { /* none */ }
     }
-    if (!r.roomTiles.length) return;
+    if (!r.roomTiles.length) {
+      // Nothing to bring back (another device, say): the stage is empty for everyone, as on this page.
+      if (r.stageTile) r.stageTile = null;
+      r.link.all({ kind: 'stage', uri: null });
+      return;
+    }
     if (before && before !== r.me) {
       let mine = false;
       for (const t of r.roomTiles) if (t.by === before) { t.by = r.me; mine = true; }
-      if (mine) put(o.session, tilesKey(r.code), JSON.stringify(r.roomTiles));
+      if (mine) put(o.session, tilesKey(r.code), JSON.stringify(r.roomTiles));   // (stage flags kept as they were)
     }
+    const staged = r.roomTiles.find((t) => t.stage)?.uri || r.stageTile;
+    r.roomTiles = r.roomTiles.map(({ stage, ...t }) => t);
     r.roomTiles.forEach((t) => { r.strip.show(t); if (t.live) r.live.setLive(t.uri, true); });
-    r.link.all({ kind: 'tiles', list: r.roomTiles });
+    r.stageTile = staged && r.roomTiles.some((t) => t.uri === staged) ? staged : null;
+    r.strip.setStaged(r.stageTile);
+    r.link.all({ kind: 'tiles', list: tilesList() });
   }
 
   // ---- Someone asks to see my screen (the host allowed it, or it's the host asking) ----
@@ -1038,11 +1183,13 @@ export function mountRoomPage(root, options = {}) {
     try { track.contentHint = 'detail'; } catch { /* old browser */ }
     track.addEventListener('ended', () => stopShare('You stopped sharing.'));      // the browser's own "Stop sharing"
     r.screenTrack = track; r.screenStream = stream;
+    const before = r.presenter;
     r.presenter = r.me;
+    if (r.host) hostPresenterChanged(before, r.me);
     r.mesh.setScreen(track, stream);
     r.link.all({ kind: 'presenting', on: true });
     note('→', null, 'presenting on');
-    say("You're sharing your screen with everyone here.");
+    say(r.stageTile ? "You're sharing your screen. A tile is on the stage; the host can switch back to your screen." : "You're sharing your screen with everyone here.");
     render();
   }
 
@@ -1148,19 +1295,43 @@ export function mountRoomPage(root, options = {}) {
   function renderStage() {
     const r = room;
     if (!r) return;
-    const { video, caption } = r.els;
-    let stream = null, text = 'Nobody is sharing a screen.';
-    if (r.presenter === r.me && r.screenStream) { stream = r.screenStream; text = "You're sharing your screen (everyone here sees it)."; }
-    else if (r.presenter) {
-      const s = r.remote.get(r.presenter)?.screen;
-      const live = s && s.getVideoTracks().some((t) => t.readyState === 'live');
-      if (live) { stream = s; text = `${nameOf(r.presenter)}’s screen`; }
-      else text = `Waiting for ${nameOf(r.presenter)}’s screen…`;
-    }
+    const { video, caption, stageBadge, full, emptyLine, emptyHint, empty } = r.els;
+    const mine = r.presenter === r.me && r.screenStream;
+    const remote = r.presenter && !mine ? r.remote.get(r.presenter)?.screen : null;
+    const remoteLive = !!remote && remote.getVideoTracks().some((t) => t.readyState === 'live');
+    const card = !r.stageTile ? 'missing' : r.strip.elementOf(r.stageTile) ? 'card' : r.strip.wasHidden(r.stageTile) ? 'hidden' : 'missing';
+    const what = whatsOnStage({ tile: r.stageTile, card, presenter: r.presenter, screenLive: !!mine || remoteLive });
+    const stream = what === 'screen' ? (mine ? r.screenStream : remote) : null;
     if (video.srcObject !== stream) { video.srcObject = stream; if (stream) video.play?.().catch(() => {}); }
     video.hidden = !stream;
-    caption.textContent = text;
-    r.els.stage.classList.toggle('rl-empty', !stream);
+    const tileName = r.stageTile ? (r.strip.name(r.stageTile) || 'a tile') : '';
+    const tileBy = r.stageTile ? r.strip.by(r.stageTile) : null;
+    const badge = what === 'screen' || what === 'waiting' ? 'Screen' : what.startsWith('tile') ? 'Tile' : null;
+    stageBadge.textContent = badge || '';
+    stageBadge.hidden = !badge;
+    stageBadge.className = `rl-stage-badge${badge === 'Tile' ? ' rl-stage-badge-tile' : badge === 'Screen' ? ' rl-stage-badge-screen' : ''}`;
+    caption.textContent = {
+      screen: mine ? 'Your screen (everyone here sees it)' : `${nameOf(r.presenter)}\u2019s screen`,
+      waiting: `Waiting for ${nameOf(r.presenter)}\u2019s screen\u2026`,
+      tile: `${tileName}${tileBy ? ` \u00b7 opened by ${nameOf(tileBy)}` : ''}`,
+      'tile-hidden': `${tileName} (hidden on your page)`,
+      'tile-coming': 'Opening the tile on the stage\u2026',
+      empty: '',
+    }[what];
+    emptyLine.textContent = {
+      waiting: `Waiting for ${nameOf(r.presenter)}\u2019s screen\u2026`,
+      'tile-hidden': 'You hid the tile on the stage. It\u2019s still on the stage for everyone else.',
+      'tile-coming': 'Opening the tile on the stage\u2026',
+      empty: EMPTY_LINE,
+    }[what] || '';
+    emptyHint.textContent = what === 'empty' ? (r.host ? EMPTY_HINT_HOST : EMPTY_HINT_GUEST) : '';
+    empty.hidden = what === 'screen' || what === 'tile';
+    const doc = r.els.stage.ownerDocument;
+    full.hidden = what !== 'screen' || !fullScreenCall(r.els.stage, video);
+    full.textContent = fullScreenNow(doc) === r.els.stage ? 'Exit full screen' : 'Full screen';
+    r.els.stage.dataset.on = what;
+    r.els.stage.classList.toggle('rl-empty', what !== 'screen');
+    placeStaged();
   }
 
   function renderPeople() {
@@ -1197,6 +1368,11 @@ export function mountRoomPage(root, options = {}) {
     const r = room;
     if (!r) return;
     r.over = true;
+    r.placer?.disconnect();
+    globalThis.removeEventListener?.('resize', r.onResize);
+    globalThis.document?.removeEventListener('fullscreenchange', r.onFull);
+    globalThis.document?.removeEventListener('webkitfullscreenchange', r.onFull);
+    if (globalThis.document && fullScreenNow(globalThis.document)) leaveFullScreen(globalThis.document);
     for (const t of r.iceTimers) { clearTimeout(t); clearInterval(t); }
     clearTimeout(r.iceRefresh);
     stopShare(null, { tell: !quiet });

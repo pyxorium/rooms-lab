@@ -23,6 +23,10 @@
 //   { kind: "wish", id, wish: "live", uri }        to the host: "share this tile live with the room"
 //   { kind: "tile-live", uri, on }                 to everyone, from the host's page only
 //   `tiles` entries carry `live: true` for tiles shared live (a newcomer learns which).
+// The stage (build step 9, stage.js), from the host's page only:
+//   { kind: "stage", uri }                         to everyone: this tile is on the stage (null: none; a screen
+//                                                  being shared shows instead)
+//   `tiles` entries carry `stage: true` for the tile on the stage (a newcomer learns which).
 
 import { TILE_URI, isRecordCid } from './tile-records.js';
 
@@ -34,7 +38,7 @@ export const PAGE_WISHES = ['see-screen', 'present', 'open-tile', 'live'];
 export const MAX_TILES = 6;
 const isTileUri = (x) => typeof x === 'string' && x.length <= 2600 && TILE_URI.test(x);
 const readTile = (t) => (t && typeof t === 'object' && isTileUri(t.uri) && isRecordCid(t.cid) && isPeer(t.by)
-  ? { uri: t.uri, cid: t.cid, by: t.by, ...(t.live === true ? { live: true } : {}) } : null);
+  ? { uri: t.uri, cid: t.cid, by: t.by, ...(t.live === true ? { live: true } : {}), ...(t.stage === true ? { stage: true } : {}) } : null);
 
 /** The message, cleaned, or null if it isn't one of ours. */
 export function readPeerData(d) {
@@ -78,8 +82,9 @@ export function readPeerData(d) {
     case 'tiles': {
       if (!Array.isArray(d.list) || d.list.length > MAX_TILES) return null;
       const list = d.list.map(readTile);
-      return list.every(Boolean) ? { kind: 'tiles', list } : null;
+      return list.every(Boolean) && list.filter((t) => t.stage).length <= 1 ? { kind: 'tiles', list } : null;
     }
+    case 'stage': return d.uri === null || isTileUri(d.uri) ? { kind: 'stage', uri: d.uri } : null;
     case 'tile-close': return isTileUri(d.uri) ? { kind: 'tile-close', uri: d.uri } : null;
     case 'tile-live': return isTileUri(d.uri) && typeof d.on === 'boolean' ? { kind: 'tile-live', uri: d.uri, on: d.on } : null;
     default: return null;

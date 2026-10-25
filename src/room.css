@@ -38,14 +38,29 @@
 .rl-host-tools { display: inline-flex; gap: 8px; }
 .rl-host-tools[hidden], .rl [hidden] { display: none !important; }
 .rl-status { color: var(--rl-muted); min-height: 1.5em; margin: 10px 0; }
+/* The stage (step 9): one size all evening, a bar over a 16:9 area. A staged tile's card is laid over it. */
+.rl-room { position: relative; }
 .rl-stage {
-  position: relative; background: #000; border: 1px solid var(--rl-line); border-radius: 10px;
-  aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; overflow: hidden;
+  position: relative; display: flex; flex-direction: column; background: #000; border: 1px solid var(--rl-line);
+  border-radius: 10px; overflow: hidden;
 }
-.rl-video { width: 100%; height: 100%; object-fit: contain; background: #000; }
-.rl-caption { position: absolute; left: 10px; bottom: 6px; margin: 0; font-size: 13px; color: var(--rl-muted);
-  background: rgba(0, 0, 0, .55); padding: 2px 8px; border-radius: 6px; }
-.rl-stage.rl-empty .rl-caption { position: static; background: none; font-size: 15px; }
+.rl-stage-bar { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 4px 8px; background: var(--rl-well); border-bottom: 1px solid var(--rl-line); }
+.rl-caption { flex: 1 1 auto; min-width: 0; font-size: 13px; color: var(--rl-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-stage-area { position: relative; aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; }
+.rl-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.rl-stage-empty { max-width: 34em; padding: 16px; text-align: center; }
+.rl-stage-empty[hidden] { display: none; }
+.rl-stage-line { margin: 0; font-size: 16px; color: var(--rl-text); }
+.rl-stage-hint { margin: 8px 0 0; font-size: 13px; color: var(--rl-muted); }
+.rl-stage-hint:empty { display: none; }
+.rl .rl-stage-full { min-height: 30px; padding: 2px 10px; font-size: 13px; }
+/* The page's own "Screen" / "Tile" badges (two colours), in the same corner. */
+.rl-stage-badge { flex: none; font-size: 12px; font-weight: 700; letter-spacing: .02em; border-radius: 999px; padding: 1px 9px; }
+.rl-stage-badge[hidden] { display: none; }
+.rl-stage-badge-screen { background: var(--rl-warn); color: #2a1a05; }
+.rl-stage-badge-tile { background: var(--rl-glaze); color: var(--rl-ink); }
+.rl-stage:fullscreen { border: 0; border-radius: 0; }
+.rl-stage:fullscreen .rl-stage-area { aspect-ratio: auto; flex: 1 1 auto; }
 .rl-controls { display: flex; gap: 8px; margin-top: 10px; }
 .rl-mic[aria-pressed="true"] { border-color: var(--rl-glaze); color: var(--rl-glaze); }
 .rl-prompt { margin-top: 12px; border: 2px solid var(--rl-glaze); background: var(--rl-panel); border-radius: 10px; padding: 12px 14px; }
@@ -123,3 +138,32 @@
 .rl-clash:empty { display: none; }
 .rl .rl-link { background: none; border: none; color: var(--rl-glaze); padding: 0; min-height: 0; text-decoration: underline; font-size: inherit; }
 .rl-way .rl-problem:empty { display: none; }
+/* Step 9: a tile on the stage. Its card is laid over the stage's box (positioned by the page), never moved. */
+.rl-tile.rl-tile-on-stage { z-index: 5; margin: 0; display: flex; flex-direction: column; overflow: hidden; border-color: var(--rl-glaze); box-sizing: border-box; }
+.rl-tile-on-stage .rl-tile-head { min-height: 30px; margin-bottom: 4px; align-items: center; }
+.rl-tile-on-stage .rl-tile-who { flex-wrap: nowrap; overflow: hidden; align-items: center; }
+.rl-tile-on-stage .rl-tile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+.rl-tile-on-stage .rl-tile-by { white-space: nowrap; }
+.rl-tile-on-stage .rl-tile-author, .rl-tile-on-stage .rl-tile-size, .rl-tile-on-stage .rl-tile-desc { display: none; }
+.rl-tile-on-stage .rl-tile-body { flex: 1 1 auto; min-height: 0; }
+.rl-tile-on-stage .rl-tile-frame { height: 100% !important; }
+.rl-tile:fullscreen { border: 0; border-radius: 0; padding: 8px; display: flex; flex-direction: column; background: var(--rl-panel); }
+.rl-tile:fullscreen .rl-tile-body { flex: 1 1 auto; min-height: 0; }
+.rl-tile:fullscreen .rl-tile-frame { height: 100% !important; }
+.rl-tile-placeholder { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; background: var(--rl-well); border: 1px dashed var(--rl-glaze); border-radius: 10px; padding: 6px 10px; color: var(--rl-muted); font-size: 13px; }
+.rl-tile-placeholder .rl-tile-name { color: var(--rl-text); }
+/* Step 9: handle suggestions under the sign-in box (Raku's, typeahead.js). */
+.rl-ta-holder { position: relative; flex: 1 1 200px; min-width: 0; display: flex; }
+.rl-ta-holder input { flex: 1 1 auto; min-width: 0; }
+.rl-ta-list {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20; margin: 0; padding: 4px; list-style: none;
+  background: #2d2722; border: 1px solid var(--rl-line); border-radius: 9px; box-shadow: 0 10px 28px rgba(0,0,0,.5);
+}
+.rl-ta-list[hidden] { display: none; }
+.rl-ta-item { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 10px; border-radius: 7px; cursor: pointer; }
+.rl-ta-item:hover, .rl-ta-item[aria-selected="true"] { background: rgba(63,184,168,.16); }
+.rl-ta-pic { width: 28px; height: 28px; border-radius: 50%; background: #3a322b; overflow: hidden; flex: none; }
+.rl-ta-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rl-ta-words { display: flex; flex-direction: column; min-width: 0; }
+.rl-ta-handle { color: var(--rl-text); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-ta-name { color: var(--rl-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

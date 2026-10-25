@@ -77,6 +77,9 @@ const STANDIN = readFileSync(new URL('./signin-standin.js', import.meta.url), 'u
 const errors = [];
 const DATA_JS = '/.well-known/web-tiles/data.js';
 const CORS = { 'access-control-allow-origin': '*' };
+// Step 9: the handle suggestions' service (typeahead.waow.tech, as Raku's) and Bluesky's picture server.
+const suggestQueries = [];
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 
 async function person(name, { lib = true } = {}) {
   const ctx = await browser.newContext({ permissions: ['microphone'] });
@@ -96,6 +99,16 @@ async function person(name, { lib = true } = {}) {
     passesSigned.push({ did, token });
     return json(route, { token });
   });
+  await ctx.route('https://typeahead.waow.tech/**', (route) => {
+    const u = new URL(route.request().url());
+    const q = u.searchParams.get('q') || '';
+    suggestQueries.push({ who: name, q, client: route.request().headers()['x-client'] });
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { ...CORS, 'access-control-allow-headers': 'x-client' } });
+    const actors = Object.keys(ACCOUNTS).filter((h) => h.startsWith(q.toLowerCase()))
+      .map((handle) => ({ handle, displayName: handle === 'robin.test' ? '<b>Robin</b>' : '', avatar: `https://cdn.bsky.app/img/avatar/plain/${handle}.png` }));
+    return route.fulfill({ status: 200, headers: { ...CORS, 'access-control-allow-headers': 'x-client', 'content-type': 'application/json' }, body: JSON.stringify({ actors }) });
+  });
+  await ctx.route('https://cdn.bsky.app/**', (route) => route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'image/png' }, body: PNG }));
   // The handle lookup the page uses before the sign-in window (the clash check).
   await ctx.route('https://bsky.social/xrpc/com.atproto.identity.resolveHandle**', (route) => {
     const h = new URL(route.request().url()).searchParams.get('handle');
@@ -124,7 +137,7 @@ const log = (p) => p.page.evaluate(() => window.__standinLog || []);
 async function signInAs(p, handle, { expectClash = null } = {}) {
   await p.page.click('button.rl-signin');
   await p.page.fill('.rl-handle', handle);
-  await p.page.waitForTimeout(600);                                   // the clash look-up while typing
+  await p.page.waitForTimeout(1000);                                  // the clash look-up once typing pauses
   await p.page.click('button.rl-continue');
   if (expectClash) {
     await until(p, () => !!document.querySelector('.rl-clash')?.textContent);
@@ -160,6 +173,36 @@ try {
   assert.equal(await nick.page.locator('.rl-way-name').isVisible(), false);
   await nick.page.click('button.rl-cancel');
   assert.equal(await nick.page.locator('.rl-way-name').isVisible(), true);
+
+  step('step 9: handle suggestions in the sign-in box (pick with the mouse or the keyboard), names shown as text; none in the typed-name box');
+  await nick.page.click('button.rl-signin');
+  await nick.page.locator('.rl-handle').pressSequentially('ro', { delay: 30 });
+  await nick.page.waitForSelector('.rl-ta-list:not([hidden]) .rl-ta-item');
+  assert.deepEqual(await nick.page.evaluate(() => [...document.querySelectorAll('.rl-ta-handle')].map((e) => e.textContent)), ['@robin.test']);
+  assert.equal(await text(nick, '.rl-ta-name'), '<b>Robin</b>', 'a display name is text, never markup');
+  assert.equal(await nick.page.locator('.rl-ta-name b').count(), 0);
+  assert.match(await nick.page.locator('.rl-ta-pic img').getAttribute('src'), /^https:\/\/cdn\.bsky\.app\//);
+  assert.equal(await nick.page.locator('.rl-handle').getAttribute('aria-expanded'), 'true');
+  await nick.page.locator('.rl-ta-item').first().click();
+  assert.equal(await nick.page.inputValue('.rl-handle'), 'robin.test');
+  assert.equal(await nick.page.locator('.rl-ta-list').isHidden(), true);
+  await nick.page.fill('.rl-handle', '');
+  await nick.page.locator('.rl-handle').pressSequentially('ni', { delay: 30 });
+  await nick.page.waitForSelector('.rl-ta-list:not([hidden]) .rl-ta-item');
+  await nick.page.keyboard.press('ArrowDown');
+  await nick.page.keyboard.press('Enter');
+  assert.equal(await nick.page.inputValue('.rl-handle'), 'nick.test');
+  assert.equal(await nick.page.locator('[data-signed-in]').count(), 0, 'choosing a suggestion doesn\'t sign in by itself');
+  assert.ok(suggestQueries.every((x) => x.client === 'thunderbird.cafe'), 'the client label');
+  await nick.page.click('button.rl-cancel');
+  const before = suggestQueries.length;
+  await nick.page.fill('.rl-name', '');
+  await nick.page.locator('.rl-name').pressSequentially('ro', { delay: 30 });
+  await nick.page.waitForTimeout(500);
+  assert.equal(suggestQueries.length, before, 'the typed-name box asks nobody');
+  assert.equal(await nick.page.locator('.rl-way-name .rl-ta-list').count(), 0);
+  assert.equal(await nick.page.locator('.rl-name').getAttribute('role'), null);
+  await nick.page.fill('.rl-name', '');
 
   step('Nick signs in: one "Signed in" panel ("as @nick.test · Sign out"), and he\'ll appear as "@nick.test ✓"; no clash line for an account with no other sign-in here');
   await signInAs(nick, 'Nick.Test');

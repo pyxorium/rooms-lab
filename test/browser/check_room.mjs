@@ -170,7 +170,16 @@ async function hears(p, fromName) {
   return b > a && a >= 0;
 }
 const stageShows = (p) => until(p, () => { const v = document.querySelector('.rl-video'); return v && !v.hidden && v.videoWidth > 0; }, undefined, 20000);
-const stageClear = (p) => until(p, () => document.querySelector('.rl-video').hidden && /Nobody is sharing/.test(document.querySelector('.rl-caption').textContent));
+const stageClear = (p) => until(p, () => document.querySelector('.rl-video').hidden && document.querySelector('.rl-stage').dataset.on === 'empty' && /^Nothing on the stage: nobody is sharing their screen, and no tile is on the stage\.$/.test(document.querySelector('.rl-stage-line').textContent));
+// Step 9: a tile on the stage: its card laid over the stage's box (same place, same size), the page's "Tile" badge.
+const stageHasTile = (p, uri) => until(p, (u) => {
+  const st = document.querySelector('.rl-stage');
+  const card = document.querySelector(`.rl-tile[data-uri="${u}"]`);
+  if (st.dataset.on !== 'tile' || !card || !card.classList.contains('rl-tile-on-stage')) return false;
+  const a = st.getBoundingClientRect(), b = card.getBoundingClientRect();
+  return Math.abs(a.top - b.top) < 2 && Math.abs(a.left - b.left) < 2 && Math.abs(a.width - b.width) < 2 && Math.abs(a.height - b.height) < 2
+    && !card.querySelector('.rl-stage-badge-tile').hidden && !!document.querySelector(`.rl-tile-placeholder[data-uri="${u}"]`);
+}, uri);
 
 try {
   const nick = await person('Nick'), robin = await person('Robin'), ted = await person('Ted');
@@ -240,7 +249,8 @@ try {
   await until(ted, () => document.querySelectorAll('.rl-person').length === 3);
   await stageShows(ted);
   assert.equal(await ted.page.locator('.rl-caption').textContent(), 'Nick’s screen');
-  assert.equal(await status(ted), 'Nick is presenting.');
+  assert.equal(await status(ted), 'Nick is sharing their screen.');
+  assert.equal(await ted.page.locator('.rl-stage-bar .rl-stage-badge').textContent(), 'Screen');
 
   step('Nick stops sharing: the stage clears for everyone');
   await nick.page.click('.rl-share');
@@ -358,7 +368,7 @@ try {
   for (const p of [robin, ted]) assert.equal(await tileState(p, 'counter1'), null, 'a preview is private');
   assert.equal(await sharing(nick), true, 'a preview doesn\'t stop his share');
 
-  step('Nick opens it for everyone from the preview: the house allows it, the tile takes the stage, his preview becomes his card in place (still running), and every page opens its own copy');
+  step('Nick opens it for everyone from the preview: the house allows it, the tile goes on the stage for everyone (his share keeps running underneath), his preview becomes his card in place (still running), and every page opens its own copy');
   await markFrame(nick, 'counter1');
   await tileCard(nick, 'counter1').locator('.rl-tile-open').click();
   for (const p of [nick, robin, ted]) await tileIs(p, 'counter1', 'open');
@@ -370,10 +380,29 @@ try {
   assert.equal(await tileCard(robin, 'counter1').locator('.rl-tile-name').textContent(), 'Counter');
   assert.equal(await tileCard(robin, 'counter1').locator('.rl-tile-by').textContent(), 'opened by Nick');
   await until(robin, (u) => document.querySelector(`.rl-tile[data-uri="${u}"] .rl-tile-author`)?.textContent === 'by @tiles.test', uriOf('counter1'));
-  await stageClear(robin);
-  assert.equal(await sharing(nick), false, 'the tile took the stage');
+  for (const p of [nick, robin, ted]) await stageHasTile(p, uriOf('counter1'));
+  assert.equal(await sameFrame(nick, 'counter1'), true, 'laid over the stage, not moved: still the same frame');
+  assert.equal(await sharing(nick), true, 'his share keeps running (Back to screen)');
+  await waitStatus(robin, /^Nick put a tile on the stage: Counter$/);
+  assert.equal(await status(nick), 'You put a tile on the stage: Counter');
+  assert.equal(await tileCard(nick, 'counter1').locator('.rl-tile-stage-off').textContent(), 'Back to screen');
+  assert.equal(await tileCard(robin, 'counter1').locator('.rl-tile-stage-off').isVisible(), false, 'only the host');
   assert.ok(await logHas(nick, /⌂ You: open-tile \("Counter"\): allow — The host may open tiles for everyone\./));
   assert.ok(await logHas(robin, /← Nick: tile counter1 \(opened by Nick\)/));
+  assert.ok(await logHas(robin, /← Nick: stage counter1/));
+
+  step('step 9: Nick goes back to his screen: the tile drops back into the list on every page (still running), the screen returns; then he stops sharing');
+  await tileCard(nick, 'counter1').locator('.rl-tile-stage-off').click();
+  for (const p of [robin, ted]) await stageShows(p);
+  await waitStatus(robin, /^Back to Nick’s screen\.$/);
+  for (const p of [nick, robin, ted]) {
+    await until(p, (u) => { const c = document.querySelector(`.rl-tile[data-uri="${u}"]`); return c && !c.classList.contains('rl-tile-on-stage') && !c.style.position && !document.querySelector('.rl-tile-placeholder'); }, uriOf('counter1'));
+  }
+  assert.equal(await sameFrame(nick, 'counter1'), true, 'back in the list: still the same frame');
+  assert.equal(await tileCard(nick, 'counter1').locator('.rl-tile-stage-on').textContent(), 'Put on stage');
+  await nick.page.click('.rl-share');
+  for (const p of [robin, ted]) await stageClear(p);
+  assert.equal(await sharing(nick), false);
 
   step('each person plays with their own copy: clicks in one copy don\'t reach the others');
   for (let i = 0; i < 3; i++) await counter(robin, 'counter1').click();

@@ -21,8 +21,8 @@ framework, which Raku can import as they are.
    exact version (record CID) to everyone. Each person's page then checks it for itself (Raku's hide list
    and Bluesky's moderation, then that it's still the same version) and opens its own copy, every file
    checked against the record. Each person plays with their own copy; nothing in it is sent. At most 6
-   tiles; the host's "Close for everyone", anyone's "Hide for me". Opening a tile while you present gives
-   it the stage (your share stops).
+   tiles; the host's "Close for everyone", anyone's "Hide for me". (Since step 9 the host's tiles go on the
+   stage; see 9.)
    **4b. Preview first** (`src/tile-strip.js`): the address box only previews. The tile runs on your page
    alone ("Only you can see this"), after the same checks, with its author's handle (checked both ways, as
    Raku does; otherwise the DID) and size; then **Open for everyone** (the host) or **Ask to open for
@@ -53,6 +53,17 @@ framework, which Raku can import as they are.
    else keeps a typed name marked **(unverified)**. A host who signed in can come back by account (another
    device, no host key); one live connection per account. The page asks only for the **"Rooms"** permission
    set: a pass for this relay, nothing else in the account. See "Sign-in" below.
+9. **The stage** (`src/stage.js`, `src/typeahead.js`): the stage holds one thing at a time, a **screen** or a
+   **tile**, in a box that keeps one size all evening (nothing jumps when sharing starts or stops). The page's
+   own badge says **Screen** or **Tile** (a tile names itself, so it can't pass for a screen). Tiles the host
+   opens go on the stage at once; anyone else's go to the list, and the host has **Put on stage**, **Take off
+   stage** (or **Back to screen** while someone shares a screen). The host's page decides and tells
+   everyone; a newcomer, and the host after a reload, get the stage with the tile list. A new screen share
+   takes the stage back. A staged tile's card is laid over the stage's box, never moved (a browser reloads a
+   frame that moves), and leaves "Tile …: on the stage ↑" in the list. **Full screen** for a screen or a
+   staged tile. Empty, the stage says so inside the box, with a hint for the host and for guests. The
+   sign-in box suggests handles as you type (Raku's suggestions; the letters go to typeahead.waow.tech, as
+   in Raku, the Foundry and Daisy); the typed-name box never does.
 
 ## Try it on this computer
 
@@ -230,13 +241,17 @@ and nothing is kept: when the room ends, they're gone.
 
 - `src/room-page.js`: the page. The lobby (sign in or type a name, "You'll appear in the room as …", New
   room / Join room / Rejoin as host), the stage
-  (the presenter's screen), Unmute and Share my screen, who's here (host, presenting, talking, each direct
+  (a screen or a tile, step 9), Unmute and Share my screen, who's here (host, presenting, talking, each direct
   connection), "Ask to see screen", the host's approval cards (Allow / Deny), the sharer's prompt
   ("Choose what to share…" / Not now), the host's Remove and End room, and the room's messages (wishes,
   the house's decisions, answers), and the strip of tiles opened for everyone.
 - `src/tile-strip.js`: the strip: each tile checked (hidden? same version?), then opened, newest first;
   and the private preview, which becomes the card in place when the tile is opened for everyone. Live
   tiles: the switch, "Ask to share live", "Stop sharing live" and the "Shared live with the room" badge.
+- `src/stage.js`: what the stage shows (a tile, a screen, or nothing), the host's rule that a new screen share
+  takes the stage back, the stage's wording, and full screen (including Safari's and an iPhone's video-only
+  one).
+- `src/typeahead.js`: handle suggestions in the sign-in box (an adapted copy of Raku's `typeahead.js`).
 - `src/live.js`: live tiles: the envelope, each copy's id, the hub on the host's page (one order, the
   limits: 16 KB a message, 10 a second per copy, 60 a second and 128 KB a second for the whole room), the
   checks on every receiving page, paused and resumed.
@@ -300,8 +315,10 @@ and nothing is kept: when the room ends, they're gone.
   `verifyJwt`, then the handle both ways) against real passes signed with Bluesky's code by a stand-in
   account server, a stand-in sign-in library that keeps sessions in the library's own store
   (`test/browser/signin-standin.js`), the lobby against the approved mockup, the host by account, one
-  connection per account, the Daisy warning, and no DID ever reaching a page. It needs Bluesky's packages
-  (`npm install` in `relay\`).
+  connection per account, the Daisy warning, the handle suggestions, and no DID ever reaching a page. It
+  needs Bluesky's packages (`npm install` in `relay\`). `test/browser/check_stage.mjs` runs the stage (step
+  9): tiles on and off it on three pages, the badges, the box keeping its size, full screen, a screen taking
+  the stage back, a newcomer and a host reload, a forged "stage" message, phone width.
 
 ## Consent and privacy
 
