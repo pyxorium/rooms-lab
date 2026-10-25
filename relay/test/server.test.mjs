@@ -256,7 +256,7 @@ test('the Fly files: the app name, one region, sleeps when idle and wakes on a c
   assert.match(toml, /fly deploy --ha=false/);
   assert.match(toml, /relay\.rooms\.thunderbird\.cafe/);
   const docker = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8');
-  assert.match(docker, /COPY server\.js rooms\.js \.\//);
+  assert.match(docker, /COPY server\.js rooms\.js turn\.js \.\//);
   assert.match(docker, /npm ci --omit=dev/);
   const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));

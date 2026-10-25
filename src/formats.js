@@ -21,11 +21,12 @@ export const newRoomCode = () => random(12);
 /** This page load's id in the room (others see it; it isn't a secret). */
 export const newPeerId = () => random(16, 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789');
 
-/** `#r=<code>` (an invite) or `#r=<code>&k=<host key>` (the private host link). */
+/** `#r=<code>` (an invite) or `#r=<code>&k=<host key>` (the private host link). `&turn=only` (a test switch,
+ *  step 7) makes this page send everything through the TURN relay. */
 export function readRoomHash(hash = '') {
   const q = new URLSearchParams(String(hash).replace(/^#/, ''));
   const room = q.get('r'), key = q.get('k');
-  return { room: isRoomCode(room) ? room : null, hostKey: isHostKey(key) ? key : null };
+  return { room: isRoomCode(room) ? room : null, hostKey: isHostKey(key) ? key : null, turnOnly: q.get('turn') === 'only' };
 }
 
 /** The link to send people: this page's address with the room in the hash. On this computer the ?relay=

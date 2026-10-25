@@ -126,6 +126,8 @@ export function connectRoom({
     all: (data) => send({ t: 'all', data }),
     remove: (p) => send({ t: 'remove', peer: p }),
     end: () => send({ t: 'end' }),
+    /** Ask the relay for TURN credentials (answered with { t: "ice", … } through onMessage). */
+    askIce: () => send({ t: 'ice' }),
     stop() { stopped = true; clearTimer(timer); if (ws) { try { ws.close(); } catch { /* closing anyway */ } } },
     // For the checks: drop the connection as a network blip would (it comes back by itself).
     blip() { if (ws) ws.close(); },

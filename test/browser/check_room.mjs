@@ -178,7 +178,7 @@ try {
   step('the lobby says what the lab is (honest wording)');
   await nick.page.goto(PAGE);
   const honest = await nick.page.locator('.rl-honest').textContent();
-  for (const t of ['not checked', 'Nothing is recorded', 'stores nothing', 'directly between the computers', 'no TURN', "runs on each person's own computer"]) assert.ok(honest.includes(t), t);
+  for (const t of ['not checked', 'Nothing is recorded', 'stores nothing', 'directly between computers when they can', "Cloudflare's relay, still encrypted", "runs on each person's own computer"]) assert.ok(honest.includes(t), t);
 
   step('Nick makes a room: his page holds the house, sealed (scripts only, no origin of its own), and it says it\'s ready');
   await join(nick, PAGE, 'New room');

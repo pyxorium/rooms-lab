@@ -18,12 +18,32 @@
 // Received tracks are handed to the page (`onTrack(peer, track, stream)`): audio is a person's voice,
 // video is their screen (there's no camera in the lab).
 //
+// Network routes (step 7): the browsers try a direct connection first and fall back to TURN (Cloudflare's
+// relay, credentials from our relay; turn.js) when a network blocks direct ones. With `waitForIce`, no
+// connection is made until the page hands over its servers (`setIceServers`, once the relay has answered or
+// a short wait has passed), so the first connections already know the TURN server; a refresh later updates
+// every connection (`setConfiguration`). `relayOnly` (the &turn=only test switch) sends everything through
+// TURN. `route(id)` tells whether a connection goes "direct" or "relay" (from the browser's own statistics).
+//
 // The data channel ("room", made by the side that starts; the other side receives it) carries live tiles'
 // messages (live.js), JSON text, directly between the two browsers and encrypted like voice; never through
 // the relay. `sendData(peer, obj)` is true when it went out; what arrives goes to `onData(peer, obj)` (parsed,
 // not yet checked: the page checks it); `onChannel(peer, "open" | "closed")` follows the channel.
+/** From a connection's statistics: "relay" if its chosen pair uses a TURN candidate on either side,
+ *  "direct" if it uses none, null if none is chosen yet. */
+export function routeOf(stats) {
+  const all = new Map();
+  stats.forEach((r) => all.set(r.id, r));
+  let pair = null;
+  for (const r of all.values()) if (r.type === 'transport' && r.selectedCandidatePairId) pair = all.get(r.selectedCandidatePairId);
+  if (!pair) for (const r of all.values()) if (r.type === 'candidate-pair' && (r.selected || (r.nominated && r.state === 'succeeded'))) { pair = r; break; }
+  if (!pair) return null;
+  const local = all.get(pair.localCandidateId), remote = all.get(pair.remoteCandidateId);
+  return local?.candidateType === 'relay' || remote?.candidateType === 'relay' ? 'relay' : 'direct';
+}
+
 export function createMesh({
-  signal, iceServers = [], RTCPeerConnectionImpl = globalThis.RTCPeerConnection,
+  signal, iceServers = [], RTCPeerConnectionImpl = globalThis.RTCPeerConnection, waitForIce = false, relayOnly = false,
   onTrack = () => {}, onPeerState = () => {}, onError = () => {}, leaveGraceMs = 15_000,
   onData = () => {}, onChannel = () => {}, maxDataBytes = 64 * 1024,
 }) {
@@ -32,9 +52,12 @@ export function createMesh({
   let known = new Set();           // the people in the room now (from the relay's list)
   const leaving = new Map();       // peer id → timer: gone from the list, connection kept a moment
   let mic = null, micStream = null, screen = null, screenStream = null;
+  let servers = iceServers, ready = !waitForIce, pendingSync = null;
+  const pendingSignals = [];       // [id, data] that came before the servers did
+  const config = () => ({ iceServers: servers, iceTransportPolicy: relayOnly ? 'relay' : 'all' });
 
   function create(id) {
-    const pc = new RTCPeerConnectionImpl({ iceServers });
+    const pc = new RTCPeerConnectionImpl(config());
     const p = { pc, polite: self > id, makingOffer: false, ignoreOffer: false, chain: Promise.resolve(), senders: {}, channel: null };
     peers.set(id, p);
     pc.onnegotiationneeded = async () => {
@@ -92,6 +115,7 @@ export function createMesh({
 
   // One message at a time per person, in the order they arrive.
   function handle(id, data) {
+    if (!ready) { if (pendingSignals.length < 500) pendingSignals.push([id, data]); return; }
     if (!(known.has(id) || peers.has(id)) || !self) return;
     const p = peers.get(id) || create(id);
     p.chain = p.chain.then(() => apply(id, p, data)).catch((e) => onError(id, e));
@@ -124,6 +148,7 @@ export function createMesh({
     // the relay dropped, they come back under the same id and the call never noticed. A connection that has
     // already failed or closed goes at once.
     sync(ids) {
+      if (!ready) { pendingSync = ids; return; }
       known = new Set(ids.filter((x) => x !== self));
       for (const id of [...peers.keys()]) {
         if (known.has(id)) { clearTimeout(leaving.get(id)); leaving.delete(id); continue; }
@@ -152,6 +177,23 @@ export function createMesh({
       }
     },
     state: (id) => peers.get(id)?.pc.connectionState ?? null,
+    /** The servers to use (STUN, and TURN when the relay gave credentials). The first call lets connections
+     *  start (with `waitForIce`); later calls (a refresh) update every connection already made. */
+    setIceServers(list) {
+      servers = list;
+      for (const p of peers.values()) { try { p.pc.setConfiguration(config()); } catch (e) { onError(null, e); } }
+      if (ready) return;
+      ready = true;
+      if (pendingSync) { const ids = pendingSync; pendingSync = null; this.sync(ids); }
+      for (const [id, data] of pendingSignals.splice(0)) handle(id, data);
+    },
+    get iceReady() { return ready; },
+    /** "direct", "relay" (through TURN) or null (not connected yet), from the connection's statistics. */
+    async route(id) {
+      const pc = peers.get(id)?.pc;
+      if (!pc || pc.connectionState !== 'connected') return null;
+      try { return routeOf(await pc.getStats()); } catch { return null; }
+    },
     /** Send JSON to one person over the data channel: true if it went out. */
     sendData(id, obj) {
       const ch = peers.get(id)?.channel;

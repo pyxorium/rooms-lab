@@ -6,14 +6,21 @@
 // does the WebSockets, with the `ws` package, and the limits that matter on the open internet.
 //
 // The relay passes messages and stores nothing: nothing on disk, no recording. Voice and screens go directly
-// between the computers; the relay only carries the messages that introduce them. A restart (a deploy, or
-// the machine waking from sleep) empties every room; the host's page makes its room again with its host key.
+// between the computers when they can; the relay only carries the messages that introduce them. A restart (a
+// deploy, or the machine waking from sleep) empties every room; the host's page makes its room again with its
+// host key.
+//
+// TURN (step 7, turn.js): a page that has joined a room may ask { t: "ice" } and gets { t: "ice", servers, ttl }
+// (Cloudflare TURN credentials for 4 hours) or { t: "ice", none: "off" | "unavailable" }. Only joined
+// connections, at most once every 10 minutes each and a few times in all, and a cap for the whole relay: the
+// credentials are worth money. The key stays here (Fly secrets TURN_KEY_ID, TURN_KEY_API_TOKEN).
 //
 // It never logs messages, room codes, names or addresses: only a startup line and, now and then, counts.
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createRooms, LIMITS } from './rooms.js';
+import { createTurn } from './turn.js';
 
 export const DEFAULTS = Object.freeze({
   port: 8080,
@@ -32,6 +39,9 @@ export const DEFAULTS = Object.freeze({
   sweepMs: 5_000,                     // rooms whose host's grace period is over end (rooms.js)
   maxBufferedBytes: 4 * 1024 * 1024,  // a page this far behind is dropped
   statsMs: 60 * 60_000,               // a counts line in the log, at most this often, only when busy
+  iceEveryMs: 10 * 60_000,            // one connection may ask for TURN credentials this often…
+  iceMaxPerConn: 6,                   // …and this many times in all (the first, then a refresh every 3 hours)
+  icePerMinute: 60,                   // the whole relay: at most this many asks to Cloudflare a minute
 });
 
 const originAllowed = (cfg, origin) => cfg.allowedOrigins.includes('*') || cfg.allowedOrigins.includes(origin);
@@ -39,6 +49,9 @@ const originAllowed = (cfg, origin) => cfg.allowedOrigins.includes('*') || cfg.a
 export function createRelayServer(userConfig = {}) {
   const cfg = { ...DEFAULTS, ...userConfig };
   const rooms = createRooms({ ...(cfg.now ? { now: cfg.now } : {}), ...(cfg.limits ? { limits: cfg.limits } : {}) });
+  const turn = cfg.turn || createTurn({});
+  const now = cfg.now || (() => Date.now());
+  let iceMinute = { at: 0, n: 0 };
   const conns = new Map();          // ws → { ip, joined, errors, alive, joinTimer }
   const perIp = new Map();
   const timers = [];
@@ -53,7 +66,7 @@ export function createRelayServer(userConfig = {}) {
     }
     if (req.method === 'GET' && path === '/') {
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('The Rooms lab relay: it introduces the people in a room to each other and passes their messages. It stores nothing; voice and screens go directly between the computers.\nhttps://thunderbird.cafe/webtiles/rooms-lab/\n');
+      res.end('The Rooms lab relay: it introduces the people in a room to each other and passes their messages. It stores nothing; voice and screens go directly between the computers when they can, otherwise through Cloudflare\'s TURN relay, still encrypted.\nhttps://thunderbird.cafe/webtiles/rooms-lab/\n');
       return;
     }
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
@@ -93,7 +106,7 @@ export function createRelayServer(userConfig = {}) {
 
   function onOpen(ws, ip) {
     perIp.set(ip, (perIp.get(ip) || 0) + 1);
-    const c = { ip, joined: false, errors: 0, alive: true, joinTimer: null };
+    const c = { ip, joined: false, errors: 0, alive: true, joinTimer: null, ice: { n: 0, at: -Infinity } };
     conns.set(ws, c);
     rooms.open(ws);
     c.joinTimer = setTimeout(() => { if (!c.joined) ws.close(1008, 'join a room first'); }, cfg.joinWithinMs);
@@ -101,10 +114,28 @@ export function createRelayServer(userConfig = {}) {
     ws.on('message', (data, isBinary) => {
       c.alive = true;
       if (isBinary) return deliver([{ conn: ws, msg: { t: 'error', why: 'not text' } }]);
-      deliver(rooms.receive(ws, data.toString('utf8')));
+      const text = data.toString('utf8');
+      if (text.length < 64 && /^\s*\{\s*"t"\s*:\s*"ice"\s*\}\s*$/.test(text)) return askIce(ws, c);
+      deliver(rooms.receive(ws, text));
     });
     ws.on('close', () => onClose(ws, c));
     ws.on('error', () => { /* a close always follows */ });
+  }
+
+  // TURN credentials for a page in a room (turn.js).
+  async function askIce(ws, c) {
+    const reply = (msg) => deliver([{ conn: ws, msg }]);
+    if (!c.joined) return reply({ t: 'error', why: 'join a room first' });
+    if (!turn.on) return reply({ t: 'ice', none: 'off' });
+    const t = now();
+    if (c.ice.n >= cfg.iceMaxPerConn || t - c.ice.at < cfg.iceEveryMs) return reply({ t: 'error', why: 'ice too soon' });
+    if (t - iceMinute.at >= 60_000) iceMinute = { at: t, n: 0 };
+    if (iceMinute.n >= cfg.icePerMinute) return reply({ t: 'ice', none: 'unavailable' });
+    iceMinute.n += 1;
+    c.ice = { n: c.ice.n + 1, at: t };
+    const got = await turn.get();
+    if (!conns.has(ws)) return;
+    reply(got ? { t: 'ice', servers: got.iceServers, ttl: got.ttl } : { t: 'ice', none: 'unavailable' });
   }
 
   function onClose(ws, c) {
@@ -160,9 +191,10 @@ if (isMain) {
   if (env.ALLOWED_ORIGINS) cfg.allowedOrigins = env.ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
   if (env.MAX_CONNECTIONS) cfg.maxConnections = Number(env.MAX_CONNECTIONS);
   if (env.MAX_PER_IP) cfg.maxPerIp = Number(env.MAX_PER_IP);
+  cfg.turn = createTurn({ keyId: env.TURN_KEY_ID, apiToken: env.TURN_KEY_API_TOKEN });
   const r = createRelayServer(cfg);
   const port = await r.listen();
-  console.log(`Rooms lab relay listening on :${port}; pages allowed from ${r.cfg.allowedOrigins.join(', ')}`);
+  console.log(`Rooms lab relay listening on :${port}; pages allowed from ${r.cfg.allowedOrigins.join(', ')}; TURN ${cfg.turn.on ? 'on (Cloudflare)' : 'off'}`);
   const stop = async () => { await r.close(); process.exit(0); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);

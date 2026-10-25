@@ -60,6 +60,9 @@
 .rl-tag-host { border-color: var(--rl-warn); color: var(--rl-warn); }
 .rl-tag-on { border-color: var(--rl-glaze); color: var(--rl-glaze); }
 .rl-conn { font-size: 13px; color: var(--rl-warn); }
+.rl-route-relay { border-style: dashed; }
+.rl-net { color: var(--rl-warn); font-size: 13px; margin: -4px 0 10px; }
+.rl-net[hidden] { display: none; }
 .rl-person-actions { margin-left: auto; display: inline-flex; gap: 6px; }
 .rl-messages { margin-top: 18px; color: var(--rl-muted); font-size: 13px; }
 .rl-log { max-height: 220px; overflow: auto; margin: 6px 0 0; padding-left: 22px; }

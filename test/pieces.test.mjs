@@ -35,10 +35,13 @@ test('room links: an invite carries only the room; the host link adds the key; ?
   const live = new URL('https://thunderbird.cafe/webtiles/rooms-lab/?relay=wss://evil.example/&loader=https://evil.example/.well-known/web-tiles/');
   assert.equal(page.inviteLink(live, 'abcdefghjkmn'), 'https://thunderbird.cafe/webtiles/rooms-lab/#r=abcdefghjkmn');
   assert.equal(page.hostLink(live, 'abcdefghjkmn', key), `https://thunderbird.cafe/webtiles/rooms-lab/#r=abcdefghjkmn&k=${key}`);
-  assert.deepEqual(page.readRoomHash(`#r=abcdefghjkmn&k=${key}`), { room: 'abcdefghjkmn', hostKey: key });
-  assert.deepEqual(page.readRoomHash('#r=abcdefghjkmn'), { room: 'abcdefghjkmn', hostKey: null });
-  assert.deepEqual(page.readRoomHash('#r=short&k=nope'), { room: null, hostKey: null });
-  assert.deepEqual(page.readRoomHash(''), { room: null, hostKey: null });
+  assert.deepEqual(page.readRoomHash(`#r=abcdefghjkmn&k=${key}`), { room: 'abcdefghjkmn', hostKey: key, turnOnly: false });
+  assert.deepEqual(page.readRoomHash('#r=abcdefghjkmn'), { room: 'abcdefghjkmn', hostKey: null, turnOnly: false });
+  assert.deepEqual(page.readRoomHash('#r=short&k=nope'), { room: null, hostKey: null, turnOnly: false });
+  assert.deepEqual(page.readRoomHash(''), { room: null, hostKey: null, turnOnly: false });
+  // The TURN test switch (step 7): only the exact value turns it on.
+  assert.deepEqual(page.readRoomHash('#r=abcdefghjkmn&turn=only'), { room: 'abcdefghjkmn', hostKey: null, turnOnly: true });
+  assert.equal(page.readRoomHash('#r=abcdefghjkmn&turn=yes').turnOnly, false);
 });
 
 test('which relay: the real one on the live page and the site\'s dev server; the local one on the lab\'s dev page; ?relay= only on this computer', () => {

@@ -1,6 +1,6 @@
 {
   "name": "thunderbird-rooms-relay",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The Rooms lab relay on Fly.io: introduces the people in a room to each other, passes their messages, stores nothing",
   "private": true,
   "license": "UNLICENSED",

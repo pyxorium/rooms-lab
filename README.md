@@ -40,6 +40,14 @@ framework, which Raku can import as they are.
    host turns it on per tile ("Share live with the room"; a guest can "Ask to share live"), the house
    decides as for any request, and every card says "Shared live with the room". The first live tile is a
    **live poll** (`tiles/poll/`). See "Live tiles: how a tile talks to its other copies" below.
+7. **TURN** (`relay/turn.js`, `src/mesh.js`): people on networks that block direct connections (many
+   offices, some cafés and mobile networks) can now join. The browsers still try a direct connection first;
+   when that's blocked they go through **Cloudflare's TURN relay**, which passes the media on still
+   encrypted (Cloudflare sees addresses and timing, not what's said or shown). The TURN key stays on the
+   relay (Fly secrets); each person who has joined a room gets credentials for 4 hours, and fresh ones
+   before they run out. Each person in "Here" shows **direct** or **via relay**. Add **`&turn=only`** to a
+   room link to send everything through TURN from that page (a test switch; never in the invite link). If
+   TURN isn't available the room works as before, direct only, and the page says so. See "TURN" below.
 
 ## Try it on this computer
 
@@ -68,6 +76,19 @@ tiles through a stand-in for the loader, since it can't install it.)
 
 On one computer both windows hear the same microphone, so expect echo: mute one, or use headphones.
 
+TURN on this computer: the local relay has no TURN key, so the page shows "The fallback relay isn't
+available right now…" and everyone connects directly (fine on one computer). To try the real Cloudflare TURN
+locally, set the key in that PowerShell window first, then `npm run dev`:
+
+```
+$env:TURN_KEY_ID = "<the key id>"
+$env:TURN_KEY_API_TOKEN = "<the API token>"
+npm run dev
+```
+
+and add `&turn=only` to one window's room link: its people should show "via relay". (Close the window
+afterwards: the key lives only in it.)
+
 ## Going live (build step 5)
 
 In this order (as with the site's tables: **publish and pin before pushing**). Make an app password for
@@ -94,6 +115,31 @@ thunderbird.cafe first, and delete it after step 2.
 After changing the page here: run `copy-to-site.mjs` again and push the site. After changing the house:
 `node scripts/publish.mjs --again`, then `copy-to-site.mjs`, then push (the live page loads only the pinned
 version; delete the old house record in PDSls once the new page is live).
+
+## TURN (build step 7)
+
+Most of the time voice and screens go directly between the computers. Some networks block that; then the
+browsers fall back to a TURN server that passes the media on. The lab uses **Cloudflare's** (its Realtime
+TURN service; 1,000 GB free each month, then $0.05 a GB, counting only what Cloudflare sends out).
+
+- **The key stays on the relay** (Fly secrets `TURN_KEY_ID`, `TURN_KEY_API_TOKEN`). A page that has
+  joined a room asks the relay (`{ t: "ice" }`); the relay asks Cloudflare for credentials that last **4
+  hours** and passes them on. The page asks again after 3 hours (or on its next rejoin), and its
+  connections take the fresh ones in place, so nothing drops in a long meetup.
+- **Limits** (credentials are worth money): only pages in a room; one ask every 10 minutes per connection,
+  6 in all; 60 asks a minute for the whole relay. Set a low billing alert in Cloudflare too.
+- **Connections wait** up to 4 seconds for the credentials before they start, so the first ones already
+  know the TURN server; if the relay doesn't answer, they start with STUN only.
+- **If TURN isn't available** (no secrets, or Cloudflare not answering), rooms work as before, direct
+  only, and the page says: "The fallback relay isn't available right now, so people on strict networks may
+  not be able to connect."
+- **"direct" / "via relay"** next to each person in "Here": read from the browser's own connection
+  statistics (the chosen pair of addresses uses a TURN address on either side, or not). Everyone sees it.
+- **The test switch:** `&turn=only` at the end of a room link (`…#r=<code>&turn=only`) makes that page
+  send everything through TURN, so you can prove TURN works between two ordinary computers. The page says
+  it's on; the invite link it shows never carries it; with TURN unavailable it says it can't connect.
+- Cloudflare's addresses on port 53 are left out (browsers block that port). TLS on port 443
+  (`turns:…:443`) is kept: it's what gets through the strictest networks.
 
 ## Live tiles: how a tile talks to its other copies
 
@@ -166,11 +212,15 @@ and nothing is kept: when the room ends, they're gone.
   that one, `--dry-run` shows what it would do, `--again house` publishes that tile again as a new record.
   It writes `published.json`.
 - `src/room-link.js`: the connection to the relay (joining, reconnecting, the host key, a relay restart).
-- `src/mesh.js`: the direct connections between the computers (WebRTC), one to each other person.
+- `src/mesh.js`: the connections between the computers (WebRTC), one to each other person: direct when
+  they can be, through TURN otherwise; waits for the relay's TURN credentials; "direct" or "relay" per
+  connection.
+- `relay/turn.js`: TURN credentials from Cloudflare (on the relay; the key never reaches a page).
 - `src/levels.js`: who's talking (measured on each computer; nothing sent).
 - `src/presenting.js`: one presenter at a time, worked out the same way on every page.
 - `src/messages.js`: what the pages say to each other, checked on arrival.
-- `src/formats.js`, `src/config.js`: room codes, links, the relay address, STUN servers, timings.
+- `src/formats.js`, `src/config.js`: room codes, links (and the `&turn=only` switch), the relay address,
+  STUN servers, timings.
 - `src/room.css`: the look (Raku's palette), scoped to `.rl`.
 - `dev/`: the dev page, `serve.mjs` (`npm run dev`), and `tile-host.js` (the tile loader, for the dev page).
 - `site/`: what only the site's page has: `main.js` (the site's tile loader for the house and for tiles;
@@ -186,6 +236,9 @@ and nothing is kept: when the room ends, they're gone.
   and the house and a tile running through a replica of the tile loading server (`test/loader-replica.mjs`),
   including the live poll shared live through the real loader. `test/browser/check_live.mjs` runs live
   tiles across four pages on the dev page (the real poll, every page's relay messages recorded).
+  `test/browser/check_turn.mjs` runs TURN with a stand-in for Cloudflare's credentials API and a tiny real
+  TURN server (`test/browser/turn-standin.mjs`, for the checks only), so Chromium really sends media through
+  TURN with `&turn=only`.
 
 ## Consent and privacy
 
@@ -205,6 +258,6 @@ and nothing is kept: when the room ends, they're gone.
   instead of names, and nothing is kept.
 - Microphones start off. The browser asks the first time you unmute.
 - Nothing is recorded or stored. Names are typed and not checked.
-- Voice and screens go directly between the computers, encrypted by the browsers. Each computer asks a
-  public STUN server (Google's or Cloudflare's) for its own address. No TURN server yet: networks that
-  block direct connections can't join the call.
+- Voice and screens go directly between computers when they can. When a network blocks that, they pass
+  through Cloudflare's TURN relay, still encrypted; Cloudflare sees addresses and timing, not what's said
+  or shown. Each computer also asks a public STUN server (Google's or Cloudflare's) for its own address.

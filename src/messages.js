@@ -85,3 +85,21 @@ export function readPeerData(d) {
     default: return null;
   }
 }
+
+// From the relay itself (step 7): TURN credentials, { t: "ice", servers: [{ urls, username?, credential? }], ttl }
+// or { t: "ice", none: "off" | "unavailable" }. Checked like everything else before the browser gets them.
+const ICE_URL = /^(stun|turns?):[A-Za-z0-9.-]+(:\d{1,5})?(\?transport=(udp|tcp))?$/;
+const iceText = (x) => typeof x === 'string' && x.length > 0 && x.length <= 512;
+/** → [{ urls, username?, credential? }] with at least one TURN entry, or null. */
+export function readIceServers(list) {
+  if (!Array.isArray(list) || list.length > 4) return null;
+  const out = [];
+  for (const s of list) {
+    if (!s || typeof s !== 'object' || !Array.isArray(s.urls) || !s.urls.length || s.urls.length > 12) return null;
+    if (!s.urls.every((u) => typeof u === 'string' && ICE_URL.test(u))) return null;
+    const turn = s.urls.some((u) => u.startsWith('turn'));
+    if (turn && !(iceText(s.username) && iceText(s.credential))) return null;
+    out.push(turn ? { urls: [...s.urls], username: s.username, credential: s.credential } : { urls: [...s.urls] });
+  }
+  return out.some((s) => s.username) ? out : null;
+}

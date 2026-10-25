@@ -10,8 +10,8 @@ export const SITE_DEV_PORT = '4321';
 
 // Free public STUN servers: each computer asks one for its own public address, so two computers on
 // different home networks can reach each other directly. The STUN server sees the computer's address,
-// nothing of the call. No TURN yet (rooms-lab-plan.md, section 3): networks that block direct
-// connections can't join the call.
+// nothing of the call. On networks that block direct connections, TURN takes over (step 7): the relay hands
+// each page Cloudflare TURN credentials for 4 hours (relay/turn.js), added to these.
 export const ICE_SERVERS = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
 
 export const TIMES = Object.freeze({
@@ -19,6 +19,8 @@ export const TIMES = Object.freeze({
   noRoomTries: 20,          // …this many times (a minute), then gives up
   askTimeoutMs: 60_000,     // an unanswered "asks to see your screen" closes after a minute
   tileAskTimeoutMs: 180_000, // an unanswered request to open a tile for everyone: three minutes (the host may try it first)
+  iceWaitMs: 4000,          // connections wait this long for the relay's TURN credentials, then start without them
+  iceRefreshMs: 3 * 60 * 60_000, // credentials last 4 hours (relay/turn.js): ask for fresh ones after 3
 });
 
 export const isLocal = (loc) => loc.hostname === '127.0.0.1' || loc.hostname === 'localhost';

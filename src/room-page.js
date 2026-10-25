@@ -39,7 +39,7 @@
 import { connectRoom } from './room-link.js';
 import { createMesh } from './mesh.js';
 import { createLevels } from './levels.js';
-import { readPeerData } from './messages.js';
+import { readPeerData, readIceServers } from './messages.js';
 import { afterAnnounce, afterPeople } from './presenting.js';
 import { cleanName, newRoomCode, readRoomHash, inviteLink, hostLink } from './formats.js';
 import { createHouseBridge } from './house-bridge.js';
@@ -72,8 +72,8 @@ export const HONEST = [
   'Names are typed by each person and not checked: anyone can type any name.',
   'Nothing is recorded or stored.',
   'The relay only introduces the people in a room and passes their messages; it stores nothing.',
-  "Voice and screens go directly between the computers, encrypted by the browsers. To find each other, each computer asks a public STUN server (Google's or Cloudflare's) for its own address.",
-  "Sharing only works on networks that allow direct connections (there's no TURN server yet).",
+  "Voice and screens go directly between computers when they can. When a network blocks that, they pass through Cloudflare's relay, still encrypted; Cloudflare sees addresses and timing, not what's said or shown.",
+  "To find each other, each computer asks a public STUN server (Google's or Cloudflare's) for its own address.",
   "A tile opened for everyone runs on each person's own computer, from its author's account; each page first checks it (Raku's hide list, and that it's the same version for everyone).",
   "A tile shared live sends what people do in it to the other copies of the same tile only: through the host's page, directly between the computers (encrypted, never through the relay), with random ids instead of names. Nothing is kept.",
 ];
@@ -106,9 +106,18 @@ const DEFAULTS = {
 const get = (s, k) => { try { return s?.getItem(k) ?? null; } catch { return null; } };
 const put = (s, k, v) => { try { if (v == null) s?.removeItem(k); else s?.setItem(k, v); } catch { /* private window */ } };
 
+export const NET_NOTES = {
+  unavailable: "The fallback relay isn't available right now, so people on strict networks may not be able to connect.",
+  turnOnly: 'Test switch on (turn=only): this page sends everything through the TURN relay.',
+  turnOnlyNone: "Test switch on (turn=only), but the TURN relay isn't available, so this page can't connect to anyone.",
+};
+
 export function mountRoomPage(root, options = {}) {
   const o = { ...DEFAULTS, ...options };
   const url = o.relayUrl || relayUrl(o.loc);
+  // The &turn=only test switch (step 7): read once, kept in this tab's own address, never in the invite link.
+  let turnOnly = readRoomHash(o.loc?.hash).turnOnly;
+  const ownLink = (code) => inviteLink(o.loc, code) + (turnOnly ? '&turn=only' : '');
   const records = o.records || createTileRecords();
   const hideCheck = o.hideCheck || createHideCheck({ storage: o.storage });
   let room = null;                   // everything about the room once joined (null in the lobby)
@@ -124,10 +133,11 @@ export function mountRoomPage(root, options = {}) {
   function lobby(note = '') {
     // A host link (#r=…&k=…): keep the key in this tab only, and take it out of the address bar so it
     // isn't copied along by accident.
-    const { room: code, hostKey: linkKey } = readRoomHash(o.loc.hash);
+    const { room: code, hostKey: linkKey, turnOnly: testSwitch } = readRoomHash(o.loc.hash);
+    if (testSwitch) turnOnly = true;
     if (code && linkKey) {
       put(o.session, hostKeyKey(code), linkKey);
-      try { o.history?.replaceState(null, '', inviteLink(o.loc, code)); } catch { /* fine */ }
+      try { o.history?.replaceState(null, '', ownLink(code)); } catch { /* fine */ }
     }
     const keptKey = code ? get(o.session, hostKeyKey(code)) : null;
     const nameBox = h('input', { class: 'rl-name', type: 'text', maxlength: 40, autocomplete: 'nickname', value: get(o.storage, NAME_KEY) || '', 'aria-describedby': 'rl-name-help' });
@@ -138,7 +148,7 @@ export function mountRoomPage(root, options = {}) {
       put(o.storage, NAME_KEY, name);
       if (how === 'new') {
         const fresh = newRoomCode();
-        try { o.history?.replaceState(null, '', inviteLink(o.loc, fresh)); } catch { /* fine */ }
+        try { o.history?.replaceState(null, '', ownLink(fresh)); } catch { /* fine */ }
         enter({ code: fresh, name, create: true });
       } else enter({ code, name, hostKey: how === 'host' ? keptKey : null });
     };
@@ -173,6 +183,9 @@ export function mountRoomPage(root, options = {}) {
       hostWishes: new Map(),       // the host's page only: asker → their wish being decided (one at a time)
       roomTiles: [],               // the host's page only: the tiles open for everyone, [{ uri, cid, by, live? }]
       wasHost: false,              // the host flag last time we joined (the live hub follows it)
+      ice: { state: 'waiting', servers: null, at: 0 },   // TURN (step 7): 'waiting' | 'on' | 'off' | 'unavailable'
+      iceTimers: [],
+      route: new Map(),            // peer → 'direct' | 'relay' (from the connection's statistics)
       talking: new Set(),
       log: [],
       over: false,
@@ -195,9 +208,15 @@ export function mountRoomPage(root, options = {}) {
     });
     r.mesh = createMesh({
       iceServers: o.iceServers, RTCPeerConnectionImpl: o.RTCPeerConnectionImpl,
+      waitForIce: true, relayOnly: turnOnly,
       signal: (peer, data) => r.link.to(peer, data),
       onTrack: (peer, track, stream) => remoteTrack(peer, track, stream),
-      onPeerState: (peer, state) => { r.conn.set(peer, state); if (state === 'closed') forgetRemote(peer); renderPeople(); },
+      onPeerState: (peer, state) => {
+        r.conn.set(peer, state);
+        if (state === 'closed') { forgetRemote(peer); r.route.delete(peer); }
+        if (state === 'connected') checkRoutes();
+        renderPeople();
+      },
       onError: (peer, e) => note('!', peer, `connection setup: ${e?.name || 'error'} ${String(e?.message || '').slice(0, 120)}`),
       onData: (peer, obj) => {
         const m = readPeerLive(obj);
@@ -224,14 +243,69 @@ export function mountRoomPage(root, options = {}) {
     });
     r.me = r.link.peer;
     r.mesh.setSelf(r.me);
+    // Connections wait a moment for the relay's TURN credentials, then start without them if need be.
+    r.iceTimers.push(setTimeout(() => { if (room === r && !r.mesh.iceReady) useIce(null); }, o.times.iceWaitMs ?? 4000));
+    r.iceTimers.push(setInterval(() => checkRoutes(), 3000));
+    renderNet();
     say('Connecting to the room…');
     render();
+  }
+
+  // ---- TURN and routes (step 7) ----
+  function askIce(r) {
+    const age = Date.now() - r.ice.at;
+    if (r.ice.servers && age < (o.times.iceRefreshMs ?? 3 * 3600_000)) return;
+    r.link.askIce();
+  }
+  function gotIce(r, m) {
+    const servers = m.servers ? readIceServers(m.servers) : null;
+    if (servers) {
+      r.ice = { state: 'on', servers, at: Date.now() };
+      clearTimeout(r.iceRefresh);
+      r.iceRefresh = setTimeout(() => { if (room === r && r.link.joined) askIce(r); }, o.times.iceRefreshMs ?? 3 * 3600_000);
+      useIce(servers);
+      note('⇄', null, 'the TURN relay is ready (for networks that block direct connections)');
+    } else if (m.none === 'off' || m.none === 'unavailable' || m.servers) {
+      if (!r.ice.servers) { r.ice.state = m.none === 'off' ? 'off' : 'unavailable'; useIce(null); }
+      note('!', null, 'no TURN relay: direct connections only');
+    }
+    renderNet();
+  }
+  function useIce(servers) {
+    const r = room;
+    if (!r) return;
+    r.mesh.setIceServers(servers ? [...o.iceServers, ...servers] : o.iceServers);
+  }
+  function renderNet() {
+    const r = room;
+    if (!r) return;
+    const none = r.ice.state === 'off' || r.ice.state === 'unavailable';
+    const text = turnOnly ? (none ? NET_NOTES.turnOnlyNone : NET_NOTES.turnOnly) : none ? NET_NOTES.unavailable : '';
+    r.els.net.textContent = text;
+    r.els.net.hidden = !text;
+  }
+  let checking = false;
+  async function checkRoutes() {
+    const r = room;
+    if (!r || checking) return;
+    checking = true;
+    try {
+      let changed = false;
+      for (const [peer, st] of r.conn) {
+        if (st !== 'connected') continue;
+        const way = await r.mesh.route(peer);
+        if (room !== r) return;
+        if (way && r.route.get(peer) !== way) { r.route.set(peer, way); changed = true; }
+      }
+      if (changed) renderPeople();
+    } finally { checking = false; }
   }
 
   function buildRoom(r) {
     const els = {};
     els.status = h('p', { class: 'rl-status', role: 'status', 'aria-live': 'polite' });
-    els.invite = h('input', { class: 'rl-invite', type: 'text', readonly: true, value: inviteLink(o.loc, r.code), 'aria-label': 'Invite link' });
+    els.net = h('p', { class: 'rl-net', hidden: true });
+    els.invite = h('input', { class: 'rl-invite', type: 'text', readonly: true, value: inviteLink(o.loc, r.code), 'aria-label': 'Invite link' });   // never with the test switch
     els.copy = h('button', { type: 'button', onclick: () => copy(els.invite.value, 'Invite link copied.') }, 'Copy invite link');
     els.hostTools = h('span', { class: 'rl-host-tools', hidden: true },
       h('button', { type: 'button', onclick: () => copy(hostLink(o.loc, r.code, r.link.hostKey), 'Host link copied. Keep it to yourself: whoever opens it becomes the host.') }, 'Copy host link'),
@@ -259,6 +333,7 @@ export function mountRoomPage(root, options = {}) {
       h('div', { class: 'rl-bar' }, h('span', {}, 'Room ', h('code', {}, r.code)), els.invite, els.copy, els.hostTools, els.leave),
       els.houseLine,
       els.status,
+      els.net,
       els.approvals,
       els.stage,
       h('div', { class: 'rl-controls' }, els.mic, els.share),
@@ -305,6 +380,7 @@ export function mountRoomPage(root, options = {}) {
       if (r.screenTrack) r.link.all({ kind: 'presenting', on: true });      // back after a drop: still presenting
       if (d.host) startHouse(); else stopHouse();
       if (d.host) hostTilesBack(before);
+      askIce(r);                                      // TURN credentials (again only when they're running out)
       if (d.host !== r.wasHost) { r.wasHost = d.host; r.live.roleChanged(); }
       else r.live.hostConnected();                   // back after a drop: our live copies rejoin
       r.strip.refresh();
@@ -333,6 +409,7 @@ export function mountRoomPage(root, options = {}) {
     const r = room;
     if (!r || r.over) return;
     if (m.t === 'peers') return peers(m.list);
+    if (m.t === 'ice') return gotIce(r, m);
     if (m.t === 'from') return peerMessage(m.peer, readPeerData(m.data), m.data);
     if (m.t === 'error' && m.why === 'not here' && m.peer && m.peer === hostPeer()?.peer) {
       for (const [id, w] of r.wishes) if (w.stage === 'host') dropWish(id, 'The host isn\u2019t here right now.');
@@ -929,7 +1006,8 @@ export function mountRoomPage(root, options = {}) {
     const rows = [...r.people.values()].map((p) => {
       const mine = p.peer === r.me;
       const conn = mine || p.away ? null : r.conn.get(p.peer) || 'new';
-      const connText = { new: 'connecting…', connecting: 'connecting…', connected: null, disconnected: 'connection unsteady…', failed: "couldn't connect directly", closed: null }[conn] ?? null;
+      const connText = { new: 'connecting…', connecting: 'connecting…', connected: null, disconnected: 'connection unsteady…', failed: r.ice.state === 'on' ? "couldn't connect" : "couldn't connect directly", closed: null }[conn] ?? null;
+      const way = conn === 'connected' ? r.route.get(p.peer) : null;
       const asked = [...r.wishes.values()].some((w) => w.target === p.peer);
       return h('li', { class: 'rl-person', 'data-peer': p.peer },
         h('span', { class: `rl-dot${r.talking.has(p.peer) ? ' rl-talking' : ''}`, title: r.talking.has(p.peer) ? 'talking' : '' }),
@@ -940,6 +1018,7 @@ export function mountRoomPage(root, options = {}) {
         r.presenter === p.peer ? h('span', { class: 'rl-tag rl-tag-on' }, 'presenting') : null,
         r.talking.has(p.peer) ? h('span', { class: 'rl-tag' }, 'talking') : null,
         connText ? h('span', { class: 'rl-conn' }, connText) : null,
+        way ? h('span', { class: `rl-tag rl-route${way === 'relay' ? ' rl-route-relay' : ''}`, title: way === 'relay' ? 'Your connection to this person goes through the TURN relay (still encrypted).' : 'Your connection to this person goes directly between the computers.' }, way === 'relay' ? 'via relay' : 'direct') : null,
         h('span', { class: 'rl-person-actions' },
           !mine && !p.away ? h('button', { type: 'button', class: 'rl-ask', disabled: asked || r.wishes.size > 0 || !!r.presenter || !r.link.joined || !hostHere(), onclick: () => wish('see-screen', p.peer) }, asked ? 'Asked\u2026' : 'Ask to see screen') : null,
           r.host && !mine ? h('button', { type: 'button', class: 'rl-remove rl-danger', onclick: () => r.link.remove(p.peer) }, 'Remove') : null),
@@ -955,6 +1034,8 @@ export function mountRoomPage(root, options = {}) {
     const r = room;
     if (!r) return;
     r.over = true;
+    for (const t of r.iceTimers) { clearTimeout(t); clearInterval(t); }
+    clearTimeout(r.iceRefresh);
     stopShare(null, { tell: !quiet });
     closePrompt();
     for (const w of r.wishes.values()) clearTimeout(w.timer);
