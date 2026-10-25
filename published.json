@@ -12,5 +12,12 @@
     "cid": "bafyreidq3qwid7dkkhif7dargvrosez3x5xxlg6sx337uk3h7srva5hnky",
     "manifestCid": "bafyreibvhfqvkzsfbwbnromfznzxvfmcdnmgifhiixgmxmdtiwhtipopfm",
     "publishedAt": "2026-10-24T17:17:47.438Z"
+  },
+  "lexicons": {
+    "cafe.thunderbird.rooms.authJoin": {
+      "uri": "at://did:plc:6vxjigxrqizmbo56gojxico3/com.atproto.lexicon.schema/cafe.thunderbird.rooms.authJoin",
+      "cid": "bafyreih3pr5lapqhgltlu43u6to2r53nl2lsutdy756r5haptpbfsahxjy",
+      "text": "{\"lexicon\":1,\"id\":\"cafe.thunderbird.rooms.authJoin\",\"description\":\"The Rooms permission set (thunderbird.cafe's Rooms lab): signing in lets a room show your verified handle. Requested with the rooms relay as the audience: include:cafe.thunderbird.rooms.authJoin?aud=did:web:relay.rooms.thunderbird.cafe%23rooms_relay\",\"defs\":{\"main\":{\"type\":\"permission-set\",\"title\":\"Rooms\",\"detail\":\"Lets rooms show your verified handle to the people in a room. Nothing in your account is read or changed.\",\"permissions\":[{\"type\":\"permission\",\"resource\":\"rpc\",\"lxm\":[\"cafe.thunderbird.rooms.join\"],\"inheritAud\":true}]}}}"
+    }
   }
 }
