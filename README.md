@@ -71,6 +71,17 @@ framework, which Raku can import as they are.
    host's page yet keeps asking every couple of seconds, and its card says "Joining the live room…"
    meanwhile (a phone's one request was lost in the owner's test). The Screen badge is cream (amber means
    "attention" on this page).
+10. **New tiles offered** (`src/new-tiles.js`; version 0.10.0): someone **signed in** who publishes a tile
+   (in the Foundry's tab, say) finds it offered on their own page when they come back to the room's tab:
+   "**Twilight Sprite** is now saved in your account." [Preview it] [Not now] ("… and +2 more are now saved …"
+   for several). Preview it does exactly what pasting the address and pressing Preview does; Not now drops
+   them for this visit. Only that person's page looks, and only at their own account (its newest tile
+   records, from their own server): once each time the room's tab becomes visible again, and every 30 s
+   while it's visible, not while an offer waits; tiles from before joining (a minute's slack), already in
+   the strip or previewed aren't offered. Nobody else, not even the host, hears of a new tile unless its maker
+   shows it; typed names can't be matched to an account, so they get no offer. The tile box's help is now one
+   line: "Paste a tile's address (at://… or a tile link), preview it here, and then open it for everyone."
+   (`claude/rooms-new-tile-offer-plan.md`.)
 
 ## Try it on this computer
 
@@ -259,6 +270,8 @@ and nothing is kept: when the room ends, they're gone.
   takes the stage back, the stage's wording, and full screen (including Safari's and an iPhone's video-only
   one).
 - `src/typeahead.js`: handle suggestions in the sign-in box (an adapted copy of Raku's `typeahead.js`).
+- `src/new-tiles.js`: the new-tile offer (0.10.0): when to look, what counts, the offer's words; `recent()` in
+  `src/tile-records.js` lists an account's newest tile records.
 - `src/live.js`: live tiles: the envelope, each copy's id, the hub on the host's page (one order, the
   limits: 16 KB a message, 10 a second per copy, 60 a second and 128 KB a second for the whole room), the
   checks on every receiving page, paused and resumed.

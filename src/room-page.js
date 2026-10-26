@@ -67,6 +67,7 @@ import { createLiveTiles, readPeerLive } from './live.js';
 import { parseAddress, HINT } from './address.js';
 import { whatsOnStage, afterPresenterChange, stageLines, EMPTY_LINE, EMPTY_HINT_HOST, EMPTY_HINT_GUEST, fullScreenCall, fullScreenNow, leaveFullScreen } from './stage.js';
 import { attachTypeahead } from './typeahead.js';
+import { createNewTileWatcher, offerWords, POLL_MS as NEW_TILE_POLL_MS, LIST_LIMIT as NEW_TILE_LIST } from './new-tiles.js';
 
 export const h = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -82,6 +83,8 @@ export const h = (tag, attrs = {}, ...kids) => {
 
 const PHONE_UPRIGHT = '(orientation: portrait) and (max-width: 700px)';   // step 9b: the tall tile stage
 const NAME_KEY = 'rooms-lab-name';                 // localStorage: your typed name, for next time
+// The tile box's help (0.10.0, owner's words): one line for everyone.
+export const TILE_HELP = 'Paste a tile\u2019s address (at://\u2026 or a tile link), preview it here, and then open it for everyone.';
 const hostKeyKey = (room) => `rooms-lab-host:${room}`;   // sessionStorage: this tab's host key for a room
 const tilesKey = (room) => `rooms-lab-tiles:${room}`;    // sessionStorage: the host's tiles open for everyone (a reload keeps them)
 const meKey = (room) => `rooms-lab-me:${room}`;          // sessionStorage: this tab's peer id last time (a reload gets a new one)
@@ -204,7 +207,7 @@ export function mountRoomPage(root, options = {}) {
         if (!name) { problem.textContent = si ? 'Type a name first (up to 40 characters), or sign in.' : 'Type a name first (up to 40 characters).'; nameBox.focus(); return; }
         put(o.storage, NAME_KEY, name);
       }
-      const signedIn = account ? { getPass: () => si.getPass() } : {};
+      const signedIn = account ? { getPass: () => si.getPass(), did: account.did } : {};
       if (how === 'new') {
         const fresh = newRoomCode();
         try { o.history?.replaceState(null, '', ownLink(fresh)); } catch { /* fine */ }
@@ -335,9 +338,11 @@ export function mountRoomPage(root, options = {}) {
   }
 
   // ---- The room ----
-  function enter({ code, name, create = false, hostKey = null, getPass = null }) {
+  function enter({ code, name, create = false, hostKey = null, getPass = null, did = null }) {
     const r = room = {
-      code, name, me: null, signedIn: !!getPass, host: false, people: new Map(), presenter: null,
+      code, name, me: null, signedIn: !!getPass, host: false,
+      did: getPass ? did : null,   // the signed-in account (0.10.0: its new tiles are offered on this page only)
+      joinedAt: Date.now(), newTiles: null, offerOpen: false, people: new Map(), presenter: null,
       micTrack: null, micStream: null, muted: true, screenTrack: null, screenStream: null,
       remote: new Map(),           // peer → { audio: <audio>, voice: stream, screen: stream }
       conn: new Map(),             // peer → connection state
@@ -521,6 +526,8 @@ export function mountRoomPage(root, options = {}) {
     els.tileButton = h('button', { type: 'submit', class: 'rl-tile-preview-go' }, 'Preview');
     els.tileForm = h('form', { class: 'rl-tile-form', onsubmit: (ev) => { ev.preventDefault(); previewTile(); } }, els.tileInput, els.tileButton);
     els.strip = h('ul', { class: 'rl-strip' });
+    // 0.10.0: "Twilight Sprite is now saved in your account." (signed in only; new-tiles.js).
+    els.offer = h('div', { class: 'rl-offer', role: 'status', 'aria-live': 'polite', hidden: true });
     els.prompt = h('div', { class: 'rl-prompt', role: 'alertdialog', 'aria-live': 'assertive', hidden: true });
     els.people = h('ul', { class: 'rl-people' });
     els.log = h('ol', { class: 'rl-log' });
@@ -536,8 +543,9 @@ export function mountRoomPage(root, options = {}) {
       els.prompt,
       h('section', { class: 'rl-tiles' },
         h('h2', {}, 'Tiles opened for everyone'),
+        els.offer,
         els.tileForm,
-        h('p', { class: 'rl-help' }, 'Paste a tile\u2019s address (as Raku shows it, or a viewer\u2019s link) and preview it (only you see the preview). Then open it for everyone: each person gets their own copy, and each page checks it first.'),
+        h('p', { class: 'rl-help rl-tile-help' }, TILE_HELP),
         els.strip),
       h('h2', {}, 'Here'),
       els.people,
@@ -582,6 +590,7 @@ export function mountRoomPage(root, options = {}) {
       if (d.host !== r.wasHost) { r.wasHost = d.host; r.live.roleChanged(); }
       else r.live.hostConnected();                   // back after a drop: our live copies rejoin
       r.strip.refresh();
+      if (r.did && !r.newTiles) startNewTiles(r);
       say(d.host ? "You're the host. Send the invite link to the people you want here." : "You're in the room.");
     } else if (state === 'down') say('Reconnecting to the room… (voice and screens carry on meanwhile)');
     else if (state === 'connecting') say('Connecting to the room…');
@@ -680,7 +689,7 @@ export function mountRoomPage(root, options = {}) {
       else if (m.kind === 'ask-screen') askedForScreen(m.asker, m.id);
       else if (m.kind === 'tile') tileOpened(m);
       else if (m.kind === 'tiles') {
-        m.list.forEach((t) => { r.strip.show(t); if (t.live) r.live.setLive(t.uri, true); });
+        m.list.forEach((t) => { r.strip.show(t); r.newTiles?.forget(t.uri); if (t.live) r.live.setLive(t.uri, true); });
         r.live.hostConnected();
         followStage(m.list.find((t) => t.stage)?.uri || null, { quiet: true });
       } else if (m.kind === 'tile-live') r.live.setLive(m.uri, m.on);
@@ -953,11 +962,61 @@ export function mountRoomPage(root, options = {}) {
     if (!parseTileUri(uri)) { say(HINT); return; }
     if (r.strip.isShared(uri)) { say('That tile is already open for everyone.'); return; }
     r.els.tileInput.value = '';
+    previewUri(uri);
+  }
+
+  // The private preview (step 4b), from a pasted address or from the new-tile offer (0.10.0): the same either way.
+  function previewUri(uri) {
+    const r = room;
+    if (!r || r.over || !parseTileUri(uri)) return;
+    if (r.strip.isShared(uri)) { say('That tile is already open for everyone.'); return; }
+    r.newTiles?.forget(uri);
     r.strip.preview(uri, { buttons: [
       { text: r.host ? 'Open for everyone' : 'Ask to open for everyone', cls: 'rl-primary rl-tile-open', needsOpen: true,
         disabled: () => !canAskTile(), onclick: (e) => wish('open-tile', null, e.uri, e.cid) },
       { text: 'Cancel', cls: 'rl-tile-cancel', onclick: (e) => r.strip.removePreview(e.uri) },
     ] });
+  }
+
+  // ---- New tiles (0.10.0; claude/rooms-new-tile-offer-plan.md) ----
+  // Signed in only: this page looks at its own account's newest tile records when the room's tab becomes visible
+  // again, and every 30 s while visible (not while an offer waits). Nobody else hears of them.
+  function startNewTiles(r) {
+    const doc = globalThis.document;
+    r.newTiles = createNewTileWatcher({
+      did: r.did, since: r.joinedAt,
+      list: (d) => records.recent(d, NEW_TILE_LIST),
+      skip: (uri) => r.strip.has(uri),
+      onOffer: (tiles) => renderOffer(r, tiles),
+      isVisible: () => !doc || doc.visibilityState !== 'hidden',
+      pollMs: o.times.newTilePollMs ?? NEW_TILE_POLL_MS,
+    });
+    r.onVisible = () => { if (room === r && !r.over && doc.visibilityState === 'visible') r.newTiles.visible(); };
+    doc?.addEventListener('visibilitychange', r.onVisible);
+  }
+
+  function renderOffer(r, tiles) {
+    if (room !== r || r.over) return;
+    const box = r.els.offer;
+    const w = offerWords(tiles);
+    if (!w) { box.hidden = true; box.replaceChildren(); r.offerOpen = false; return; }
+    const preview = (t) => { r.newTiles.take(t.uri); previewUri(t.uri); };
+    const more = w.more
+      ? [' and ', h('button', { type: 'button', class: 'rl-offer-more', 'aria-expanded': String(r.offerOpen),
+          onclick: () => { r.offerOpen = !r.offerOpen; renderOffer(r, r.newTiles.offered); } }, `+${w.more} more`)]
+      : [];
+    const list = w.more && r.offerOpen
+      ? h('ul', { class: 'rl-offer-list' }, ...tiles.slice(1).map((t) => h('li', {},
+          h('span', { class: 'rl-offer-name' }, h('b', {}, t.name || 'A tile')),
+          h('button', { type: 'button', class: 'rl-primary rl-offer-preview', onclick: () => preview(t) }, 'Preview it'))))
+      : null;
+    box.replaceChildren(
+      h('span', { class: 'rl-offer-text' }, h('b', {}, w.name), ...more, w.tail),
+      h('span', { class: 'rl-offer-actions' },
+        h('button', { type: 'button', class: 'rl-primary rl-offer-preview', onclick: () => preview(tiles[0]) }, 'Preview it'),
+        h('button', { type: 'button', class: 'rl-offer-no', onclick: () => r.newTiles.notNow() }, 'Not now')),
+      ...(list ? [list] : []));
+    box.hidden = false;
   }
 
   function tilesFull(uri) {
@@ -1014,6 +1073,7 @@ export function mountRoomPage(root, options = {}) {
   // A tile opened for everyone: into the strip (the host's page then decides whether it goes on the stage).
   function tileOpened(t) {
     room.strip.show(t);
+    room.newTiles?.forget(t.uri);
   }
 
   // ---- The stage (step 9) ----
@@ -1394,6 +1454,8 @@ export function mountRoomPage(root, options = {}) {
     if (!r) return;
     r.over = true;
     r.placer?.disconnect();
+    r.newTiles?.stop();
+    globalThis.document?.removeEventListener('visibilitychange', r.onVisible);
     globalThis.removeEventListener?.('resize', r.onResize);
     globalThis.document?.removeEventListener('fullscreenchange', r.onFull);
     globalThis.document?.removeEventListener('webkitfullscreenchange', r.onFull);

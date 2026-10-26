@@ -96,6 +96,16 @@
 /* Step 4: tiles opened for everyone. */
 .rl-tiles { margin-top: 18px; }
 .rl-tile-form { display: flex; flex-wrap: wrap; gap: 8px; }
+/* 0.10.0: the new-tile offer ("Twilight Sprite is now saved in your account."), signed in only (new-tiles.js) */
+.rl-offer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px 10px;
+  background: var(--rl-panel); border: 1px solid var(--rl-glaze); border-radius: 10px; }
+.rl-offer-text { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.rl-offer-text b, .rl-offer-name b { font-weight: 600; }
+.rl-offer-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.rl .rl-offer-more { background: none; border: 0; padding: 0; min-height: 0; color: var(--rl-glaze); text-decoration: underline; font: inherit; }
+.rl-offer-list { flex: 1 1 100%; list-style: none; margin: 4px 0 0; padding: 6px 0 0; border-top: 1px solid var(--rl-line); display: grid; gap: 6px; }
+.rl-offer-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rl-offer-name { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
 .rl-tile-input { flex: 1 1 280px; min-width: 0; }
 .rl-strip { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 12px; }
 .rl-tile { background: var(--rl-panel); border: 1px solid var(--rl-line); border-radius: 10px; padding: 8px 10px 10px; }

@@ -11,6 +11,9 @@
 // accounts through their own /.well-known/did.json (as the site's at-tile-loader.js). Nothing here runs a
 // tile: the tile loader does (the page is given a `tileHost`), in a sealed frame on the loading server.
 //
+// recent() (0.10.0, new-tiles.js) lists an account's newest tile records, for the new-tile offer on that person's
+// own page.
+//
 // The author's handle (step 4b, shown in the preview and on each card) is checked both ways, as Raku's
 // resolve.js does: the DID document names it (alsoKnownAs), and the handle resolves back to the same DID
 // (public.api.bsky.app). Otherwise there's no handle, and the page shows the DID.
@@ -208,5 +211,25 @@ export function createTileRecords({ fetchImpl = (...a) => globalThis.fetch(...a)
     };
   }
 
-  return { read, pathLoader, pdsOf, checkedHandle, didFor };
+  /**
+   * An account's newest tile records, newest first (new-tiles.js, 0.10.0): [{ uri, rkey, cid, name, createdAt }].
+   * Read from the account's own server (com.atproto.repo.listRecords); throws when it can't be read.
+   */
+  async function recent(did, limit = 10) {
+    const pds = await pdsOf(did);
+    if (!pds) throw new Error('no server for this account');
+    const q = new URLSearchParams({ repo: did, collection: COLLECTION, limit: String(Math.max(1, Math.min(limit, 25))) });
+    const r = await getJson(`${pds}/xrpc/com.atproto.repo.listRecords?${q}`, { timeoutMs: limits.lookupMs, maxBytes: limits.recordBytes });
+    if (!r.ok || !r.json || !Array.isArray(r.json.records)) throw new Error(`the account's server answered ${r.status}`);
+    const out = [];
+    for (const x of r.json.records) {
+      const at = parseTileUri(x?.uri);
+      if (!at || at.did !== did || !isRecordCid(x.cid)) continue;
+      const name = typeof x.value?.tile?.name === 'string' ? x.value.tile.name.trim().slice(0, 120) : '';
+      out.push({ uri: `at://${did}/${COLLECTION}/${at.rkey}`, rkey: at.rkey, cid: x.cid, name, createdAt: typeof x.value?.createdAt === 'string' ? x.value.createdAt : null });
+    }
+    return out;
+  }
+
+  return { read, pathLoader, pdsOf, checkedHandle, didFor, recent };
 }
