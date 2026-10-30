@@ -46,7 +46,7 @@ export const bundleTileHost = () => bundleDev('tile-host.js', '@dasl/tile-loader
 // The sign-in library for the dev page (null when it isn't installed).
 export const bundleSignInLib = () => bundleDev('signin-lib.js', '@atproto/oauth-client-browser');
 
-export async function startDev({ port = 5190, relayPort = 8787, host = '127.0.0.1', quiet = false, tileHost = undefined, turn = undefined, signInLib = undefined, signIn = undefined } = {}) {
+export async function startDev({ port = 5190, relayPort = 8787, host = '127.0.0.1', quiet = false, tileHost = undefined, turn = undefined, signInLib = undefined, signIn = undefined, origins = [] } = {}) {
   const tileHostJs = tileHost === undefined ? await bundleTileHost() : tileHost;
   const signInLibJs = signInLib === undefined ? await bundleSignInLib() : signInLib;
   const files = http.createServer(async (req, res) => {
@@ -75,9 +75,10 @@ export async function startDev({ port = 5190, relayPort = 8787, host = '127.0.0.
   });
   await new Promise((resolve) => files.listen(port, host, resolve));
   const actualPort = files.address().port;
-  // The relay lets in this dev page only (its real address, once the port is known).
+  // The relay lets in this dev page only (its real address, once the port is known), plus any `origins` a
+  // check names (Raku's check: a Raku page and this page in one room).
   const relay = createRelayServer({
-    port: relayPort, host, allowedOrigins: [`http://${host}:${actualPort}`], log: quiet ? () => {} : undefined,
+    port: relayPort, host, allowedOrigins: [`http://${host}:${actualPort}`, ...origins], log: quiet ? () => {} : undefined,
     turn: turn || createTurn({ keyId: process.env.TURN_KEY_ID, apiToken: process.env.TURN_KEY_API_TOKEN }),
     ...(signIn ? { signIn } : {}),
   });

@@ -82,6 +82,20 @@ framework, which Raku can import as they are.
    shows it; typed names can't be matched to an account, so they get no offer. The tile box's help is now one
    line: "Paste a tile's address (at://… or a tile link), preview it here, and then open it for everyone."
    (`claude/rooms-new-tile-offer-plan.md`.)
+11. **Rooms in Raku** (version 0.11.0): [Raku](https://raku.lexicographer.space/) hosts the room as one of its tabs
+   (`raku:room`), taking this folder as a package pinned to a GitHub tag (Raku's `package.json`:
+   `"rooms-lab": "github:pyxorium/rooms-lab#v0.11.0"`). Only `src/` and `published.json` go into the package
+   (`files`), and Raku imports only what `exports` names: `room-page.js`, `room.css`, `formats.js`, `config.js`,
+   `tile-records.js`, `published.json`. `mountRoomPage` takes a few options for a page that hosts it, none of which
+   the lab page passes (so it behaves as before): `joinScreen` (the host page draws its own join screen into the
+   room's view and calls `enter()`), `links` (its own invite and host links), `chrome: false` (no "Rooms lab"
+   heading or footer), `turnOnly`, and `onJoined`, `onPeople`, `onOver` (how the room is going). With them the room
+   never reads or rewrites the page's own address (Raku keeps its tabs there). `keepHostKey` / `keptHostKey`,
+   `whoLabel` and `NAME_KEY` are exported for that join screen. The relay lets in Raku
+   (`https://raku.lexicographer.space`, and `http://127.0.0.1:5180` / `:5181` for Raku's `npm run dev` / `npm run
+   preview`). The lab page and Raku can share a room (same relay); the lab page retires once Raku's room passes the
+   two-computer test (`claude/raku-rooms-plan.md`, RR3). Releasing a version for Raku: commit, then
+   `git tag v0.11.0` and `git push origin v0.11.0`; in Raku, change the tag in `package.json` and `npm install`.
 
 ## Try it on this computer
 
@@ -313,6 +327,8 @@ and nothing is kept: when the room ends, they're gone.
 - `src/formats.js`, `src/config.js`: room codes, links (and the `&turn=only` switch), the relay address,
   STUN servers, timings.
 - `src/room.css`: the look (Raku's palette), scoped to `.rl`.
+- `test/package.test.mjs`: the package Raku takes (0.11.0): every exported file exists and is packed, nothing
+  outside `src/` is imported by the room page, the hosting options are there.
 - `dev/`: the dev page, `serve.mjs` (`npm run dev`), `tile-host.js` (the tile loader, for the dev page) and
   `signin-lib.js` (the sign-in library, for the dev page).
 - `site/`: what only the site's page has: `main.js` (the site's tile loader for the house and for tiles;

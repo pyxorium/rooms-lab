@@ -149,7 +149,7 @@ It listens on `ws://127.0.0.1:8080/` (pages allowed from `https://thunderbird.ca
 | Env var | Default | Meaning |
 |---|---|---|
 | `PORT` | 8080 | Listen port |
-| `ALLOWED_ORIGINS` | `https://thunderbird.cafe` | Pages allowed to connect, comma-separated (`*` for any). In `fly.toml`: thunderbird.cafe and `http://127.0.0.1:4321` (the site's dev server). Raku's origin is added when rooms move there. A client that isn't a browser sends no origin and is let in: the check is a courtesy, not a lock. |
+| `ALLOWED_ORIGINS` | `https://thunderbird.cafe` | Pages allowed to connect, comma-separated (`*` for any). In `fly.toml`: thunderbird.cafe, `http://127.0.0.1:4321` (the site's dev server) and, since 0.11.0, Raku (`https://raku.lexicographer.space`, and `http://127.0.0.1:5180` / `:5181` for Raku's `npm run dev` / `npm run preview`). A client that isn't a browser sends no origin and is let in: the check is a courtesy, not a lock. |
 | `MAX_CONNECTIONS` | 300 | Connections in all |
 | `MAX_PER_IP` | 20 | Connections per address (Fly's `fly-client-ip` header) |
 | `TURN_KEY_ID` | (none) | Cloudflare TURN key id. **A Fly secret**, never in `fly.toml` |

@@ -51,6 +51,13 @@
 // tile list. A new screen share takes the stage back. The page's own badge says "Screen" or "Tile" (a tile names
 // itself, so it can't pass for a screen). A staged tile's card is laid over the stage, never moved (a browser
 // reloads a frame that moves). Handle suggestions in the sign-in box (typeahead.js, Raku's copy).
+//
+// Hosted by another page (0.11.0; Raku's room tab, claude/raku-rooms-plan.md): with `joinScreen` and `links`
+// the room never reads or rewrites the page's own address (Raku keeps its tabs there). The host page draws its
+// own join screen into the room's view (joinScreen({ view, note, enter, again })) and calls enter() with the
+// code, the name and (signed in) the pass; `links` builds the invite and host links; `chrome: false` leaves out
+// the lab's heading and footer; onJoined / onPeople / onOver tell the host page how the room is going. The lab
+// page passes none of these and behaves as before.
 import { connectRoom } from './room-link.js';
 import { createMesh } from './mesh.js';
 import { createLevels } from './levels.js';
@@ -82,7 +89,7 @@ export const h = (tag, attrs = {}, ...kids) => {
 };
 
 const PHONE_UPRIGHT = '(orientation: portrait) and (max-width: 700px)';   // step 9b: the tall tile stage
-const NAME_KEY = 'rooms-lab-name';                 // localStorage: your typed name, for next time
+export const NAME_KEY = 'rooms-lab-name';          // localStorage: your typed name, for next time (Raku's join screen too)
 // The tile box's help (0.10.0, owner's words): one line for everyone.
 export const TILE_HELP = 'Paste a tile\u2019s address (at://\u2026 or a tile link), preview it here, and then open it for everyone.';
 const hostKeyKey = (room) => `rooms-lab-host:${room}`;   // sessionStorage: this tab's host key for a room
@@ -127,10 +134,28 @@ const DEFAULTS = {
   signIn: null,
   // Handle suggestions in the sign-in box (typeahead.js): the fetch they use (the checks swap it); null: none.
   suggestFetch: globalThis.fetch ? (...a) => globalThis.fetch(...a) : null,
+  // Hosted by another page (0.11.0, Raku): see the top of this file. null: the lab page's own ways.
+  joinScreen: null,        // ({ view, note, again, enter }) → draws the join screen into view; enter({ code, name, create, hostKey, getPass, did })
+  links: null,             // { invite(code) → link, host(code, key) → link }
+  chrome: true,            // the lab's heading ("Rooms lab") and its footer
+  turnOnly: false,         // the &turn=only test switch, when the page's address isn't the room's
+  onJoined: null,          // ({ code, host }) each time the relay lets this page in
+  onPeople: null,          // ([{ peer, name, verified, host, away, me }]) whenever the people here change
+  onOver: null,            // ({ code, why, again, reason }) when this page leaves the room (or is taken out)
 };
 
 const get = (s, k) => { try { return s?.getItem(k) ?? null; } catch { return null; } };
 const put = (s, k, v) => { try { if (v == null) s?.removeItem(k); else s?.setItem(k, v); } catch { /* private window */ } };
+// A host key kept for one room in this tab (sessionStorage), for a host page with its own join screen (Raku).
+export const keepHostKey = (session, room, key) => put(session, hostKeyKey(room), key || null);
+export const keptHostKey = (session, room) => get(session, hostKeyKey(room));
+
+// A person's label: "@handle ✓" (checked through sign-in) or "Name (unverified)".
+export function whoLabel(name, verified) {
+  return verified
+    ? [`@${name}`, ' ', h('span', { class: 'rl-check', title: 'Handle checked through sign-in' }, '✓')]
+    : [name, ' ', h('span', { class: 'rl-unv' }, '(unverified)')];
+}
 
 export const NET_NOTES = {
   unavailable: "The fallback relay isn't available right now, so people on strict networks may not be able to connect.",
@@ -150,19 +175,28 @@ export function clashLine(hd, r) {
 export function mountRoomPage(root, options = {}) {
   const o = { ...DEFAULTS, ...options };
   const url = o.relayUrl || relayUrl(o.loc);
+  // The lab page keeps the room in its own address; a host page (Raku) keeps it itself (o.links, o.joinScreen).
+  const ownAddress = !o.links && !o.joinScreen;
+  const links = o.links || { invite: (code) => inviteLink(o.loc, code), host: (code, key) => hostLink(o.loc, code, key) };
   // The &turn=only test switch (step 7): read once, kept in this tab's own address, never in the invite link.
-  let turnOnly = readRoomHash(o.loc?.hash).turnOnly;
+  let turnOnly = ownAddress ? readRoomHash(o.loc?.hash).turnOnly : !!o.turnOnly;
   const ownLink = (code) => inviteLink(o.loc, code) + (turnOnly ? '&turn=only' : '');
   const records = o.records || createTileRecords();
   const hideCheck = o.hideCheck || createHideCheck({ storage: o.storage });
   let room = null;                   // everything about the room once joined (null in the lobby)
 
   const view = h('div', { class: 'rl-view' });
-  root.replaceChildren(h('div', { class: 'rl' },
-    h('header', { class: 'rl-top' }, h('h1', {}, 'Rooms lab'), h('span', { class: 'rl-badge' }, 'lab')),
+  root.replaceChildren(h('div', { class: o.chrome ? 'rl' : 'rl rl-hosted' },
+    o.chrome ? h('header', { class: 'rl-top' }, h('h1', {}, 'Rooms lab'), h('span', { class: 'rl-badge' }, 'lab')) : null,
     view,
-    h('footer', { class: 'rl-honest' }, h('ul', {}, HONEST.map((t) => h('li', {}, t)))),
+    o.chrome ? h('footer', { class: 'rl-honest' }, h('ul', {}, HONEST.map((t) => h('li', {}, t)))) : null,
   ));
+
+  // The way in: the lab's lobby, or the host page's own join screen (Raku).
+  function start(note = '', again = null) {
+    if (!o.joinScreen) { lobby(note); return; }
+    o.joinScreen({ view, note, again, enter: (args) => { if (!room) enter(args); } });
+  }
 
   // ---- The lobby ----
   // Two ways in (the approved mockup, claude/rooms-join-mockup.html): sign in (optional; the room shows your
@@ -330,13 +364,6 @@ export function mountRoomPage(root, options = {}) {
     return panel;
   }
 
-  // A person's label: "@handle ✓" (checked through sign-in) or "Name (unverified)".
-  function whoLabel(name, verified) {
-    return verified
-      ? [`@${name}`, ' ', h('span', { class: 'rl-check', title: 'Handle checked through sign-in' }, '✓')]
-      : [name, ' ', h('span', { class: 'rl-unv' }, '(unverified)')];
-  }
-
   // ---- The room ----
   function enter({ code, name, create = false, hostKey = null, getPass = null, did = null }) {
     const r = room = {
@@ -498,10 +525,10 @@ export function mountRoomPage(root, options = {}) {
     const els = {};
     els.status = h('p', { class: 'rl-status', role: 'status', 'aria-live': 'polite' });
     els.net = h('p', { class: 'rl-net', hidden: true });
-    els.invite = h('input', { class: 'rl-invite', type: 'text', readonly: true, value: inviteLink(o.loc, r.code), 'aria-label': 'Invite link' });   // never with the test switch
+    els.invite = h('input', { class: 'rl-invite', type: 'text', readonly: true, value: links.invite(r.code), 'aria-label': 'Invite link' });   // never with the test switch
     els.copy = h('button', { type: 'button', onclick: () => copy(els.invite.value, 'Invite link copied.') }, 'Copy invite link');
     els.hostTools = h('span', { class: 'rl-host-tools', hidden: true },
-      h('button', { type: 'button', onclick: () => copy(hostLink(o.loc, r.code, r.link.hostKey), 'Host link copied. Keep it to yourself: whoever opens it becomes the host.') }, 'Copy host link'),
+      h('button', { type: 'button', onclick: () => copy(links.host(r.code, r.link.hostKey), 'Host link copied. Keep it to yourself: whoever opens it becomes the host.') }, 'Copy host link'),
       h('button', { type: 'button', class: 'rl-danger', onclick: () => { if (r.host) r.link.end(); } }, 'End room'));
     els.leave = h('button', { type: 'button', onclick: () => leave('You left the room.') }, 'Leave');
     els.video = h('video', { class: 'rl-video', autoplay: true, playsinline: true, muted: true, hidden: true });
@@ -592,6 +619,7 @@ export function mountRoomPage(root, options = {}) {
       r.strip.refresh();
       if (r.did && !r.newTiles) startNewTiles(r);
       say(d.host ? "You're the host. Send the invite link to the people you want here." : "You're in the room.");
+      try { o.onJoined?.({ code: r.code, host: !!d.host }); } catch (err) { console.error('[rooms-lab] onJoined', err); }
     } else if (state === 'down') say('Reconnecting to the room… (voice and screens carry on meanwhile)');
     else if (state === 'connecting') say('Connecting to the room…');
     else if (state === 'no-room') say(`There's no room with this code right now. Trying again (${d.tries})…`);
@@ -621,7 +649,7 @@ export function mountRoomPage(root, options = {}) {
       // Back to this room's start (the link kept): after a replaced tab ("Join here instead") or a sign-in
       // that wasn't accepted ("Try again": sign in again, or type a name).
       const again = d.why === 'replaced' && d.by === 'account' ? 'Join here instead' : d.why === 'sign-in' ? 'Try again' : null;
-      return leave(why, { quiet: true, again });
+      return leave(why, { quiet: true, again, reason: { why: d.why, by: d.by || null, detail: d.detail || null } });
     }
     render();
   }
@@ -663,6 +691,7 @@ export function mountRoomPage(root, options = {}) {
     // The relay says which handle it checked: keep that spelling for the lobby next time.
     const mine = list.find((p) => p.peer === r.me);
     if (mine && mine.verified && r.signedIn) o.signIn?.sawHandle?.(mine.name);
+    try { o.onPeople?.(list.map((p) => ({ peer: p.peer, name: shown(p), verified: !!p.verified, host: !!p.host, away: !!p.away, me: p.peer === r.me }))); } catch (err) { console.error('[rooms-lab] onPeople', err); }
     render();
   }
 
@@ -1449,7 +1478,7 @@ export function mountRoomPage(root, options = {}) {
   }
 
   // ---- Leaving ----
-  function leave(why, { quiet = false, again = null } = {}) {
+  function leave(why, { quiet = false, again = null, reason = null } = {}) {
     const r = room;
     if (!r) return;
     r.over = true;
@@ -1478,15 +1507,16 @@ export function mountRoomPage(root, options = {}) {
     view.replaceChildren(h('section', { class: 'rl-over' },
       h('p', { class: 'rl-status', role: 'status' }, why),
       h('div', { class: 'rl-actions' },
-        again ? h('button', { type: 'button', class: 'rl-primary rl-again', onclick: () => lobby() }, again) : null,
+        again ? h('button', { type: 'button', class: 'rl-primary rl-again', onclick: () => start('', again) }, again) : null,
         h('button', { type: 'button', class: again ? '' : 'rl-primary', onclick: () => {
           // The room's link is still in the address bar: take it out, so "Back to the start" starts fresh.
-          try { o.history?.replaceState(null, '', o.loc.pathname + o.loc.search); } catch { /* fine */ }
-          lobby();
+          if (ownAddress) { try { o.history?.replaceState(null, '', o.loc.pathname + o.loc.search); } catch { /* fine */ } }
+          start();
         } }, 'Back to the start'))));
+    try { o.onOver?.({ code: r.code, why, again, reason }); } catch (err) { console.error('[rooms-lab] onOver', err); }
   }
 
-  lobby();
+  start();
   return {
     // For the checks (and the console): what the page knows right now.
     get room() { return room; },

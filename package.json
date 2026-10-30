@@ -1,10 +1,23 @@
 {
   "name": "rooms-lab",
-  "version": "0.10.0",
-  "description": "The Rooms lab: small live rooms for tile demos among friends (a proof of concept for thunderbird.cafe)",
+  "version": "0.11.0",
+  "description": "The Rooms lab: small live rooms for tile demos among friends (thunderbird.cafe's lab page, and Raku's room tab)",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
+  "exports": {
+    "./room-page.js": "./src/room-page.js",
+    "./room.css": "./src/room.css",
+    "./formats.js": "./src/formats.js",
+    "./config.js": "./src/config.js",
+    "./tile-records.js": "./src/tile-records.js",
+    "./published.json": "./published.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/",
+    "published.json"
+  ],
   "engines": {
     "node": ">=22"
   },
