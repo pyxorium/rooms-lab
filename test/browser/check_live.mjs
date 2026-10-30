@@ -342,6 +342,8 @@ try {
 
   step('phone width: no sideways scroll with live cards');
   await zoe.page.setViewportSize({ width: 390, height: 900 });
+  // (wait for the page's resize handling: measuring straight after the resize sometimes caught the staged card at its old width)
+  await zoe.page.waitForFunction(() => document.documentElement.scrollWidth <= window.innerWidth, undefined, { timeout: 3000, polling: 100 }).catch(() => {});
   assert.equal(await room(zoe, () => document.documentElement.scrollWidth <= window.innerWidth), true);
   await card(nick, 'poll2').screenshot({ path: '/tmp/claude-0/live-card-nick.png' });
   await zoe.page.screenshot({ path: '/tmp/claude-0/live-zoe-phone.png' });

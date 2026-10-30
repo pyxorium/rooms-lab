@@ -11,7 +11,8 @@
 //   - Robin hides the staged tile for herself; the host has no "Hide for me" on the staged tile;
 //   - Robin shares her screen: the screen takes the stage on every page; Nick puts a tile on the stage over it,
 //     then "Back to screen"; she stops; Nick's reload keeps the stage; "Close for everyone" empties it;
-//   - phone width: no sideways scroll, the card still over the stage.
+//   - phone width: no sideways scroll, the card still over the stage;
+//   - an iPhone (no full screen): Expand is the one button (0.12.0, RR19; fill the window is gone).
 // Same stand-ins as check_room.mjs (tile servers, the tile loader), the real relay and dev page.
 //
 //   node test/browser/check_stage.mjs           (needs Playwright with Chromium; not part of npm test)
@@ -350,7 +351,7 @@ try {
   await until(ted, (h) => Math.abs(document.querySelector('.rl-stage').getBoundingClientRect().height - h) <= 1, H);
   await stageHasTile(ted, uriOf('tall1'));
 
-  step('step 9b: where the browser has no full screen (an iPhone), Full screen fills the window instead; Exit and Escape bring it back');
+  step('RR19 (0.12.0): where the browser has no full screen (an iPhone), Expand is the one button: the stage fills the window, the room bar at the bottom; Back to the room and Escape fold it');
   const iris = await person('Iris');
   await iris.ctx.addInitScript(() => {
     Object.defineProperty(Document.prototype, 'fullscreenEnabled', { get: () => false });
@@ -360,25 +361,34 @@ try {
   await join(iris, invite, 'Join room');
   await tileIs(iris, 'tall1', 'open');
   await stageHasTile(iris, uriOf('tall1'));
-  const full = tileCard(iris, 'tall1').locator('.rl-tile-full');
-  assert.equal(await full.textContent(), 'Full screen');
-  await full.click();
+  assert.equal(await tileCard(iris, 'tall1').locator('.rl-tile-full').isVisible(), false, 'no Full screen button where there is none');
+  const expandBtn = tileCard(iris, 'tall1').locator('.rl-tile-expand');
+  assert.equal(await expandBtn.textContent(), 'Expand');
+  await expandBtn.click();
   await until(iris, (u) => {
+    const sec = document.querySelector('.rl-room'), st = document.querySelector('.rl-stage'), bar = document.querySelector('.rl-xbar');
     const c = document.querySelector(`.rl-tile[data-uri="${u}"]`);
-    const r = c.getBoundingClientRect();
-    return c.classList.contains('rl-tile-fill') && r.top === 0 && r.left === 0 && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - window.innerHeight) <= 1;
+    if (!sec.classList.contains('rl-expanded') || !c) return false;
+    const a = st.getBoundingClientRect(), b = c.getBoundingClientRect(), x = bar.getBoundingClientRect();
+    return a.top === 0 && a.left === 0 && Math.abs(a.width - window.innerWidth) <= 1 && Math.abs(a.bottom - x.top) <= 1
+      && Math.abs(x.bottom - window.innerHeight) <= 1 && x.height >= 40 && Math.abs(a.top - b.top) < 2 && Math.abs(a.height - b.height) < 2;
   }, uriOf('tall1'));
   assert.equal(await room(iris, () => document.fullscreenElement), null, 'no real full screen was used');
-  assert.equal(await full.textContent(), 'Exit full screen');
-  assert.equal(await tileCard(iris, 'tall1').locator('.rl-stage-badge-tile').isVisible(), true, 'the page\'s Tile badge stays on top');
-  if (process.env.SHOTS) await iris.page.screenshot({ path: `${process.env.SHOTS}/step9b-fill.png` });
-  await full.click();
+  assert.equal(await tileCard(iris, 'tall1').locator('.rl-stage-badge-tile').isVisible(), true, 'the page\'s Tile badge stays on the card');
+  assert.equal(await iris.page.locator('.rl-x-full').isVisible(), false, 'no Full screen in the room bar either');
+  assert.equal(await iris.page.locator('.rl-x-count').textContent(), '4 here', 'on a phone, a count instead of chips');
+  assert.equal(await iris.page.locator('.rl-x-chips').isVisible(), false);
+  assert.equal(await iris.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  if (process.env.SHOTS) await iris.page.screenshot({ path: `${process.env.SHOTS}/step3-iphone-expanded.png` });
+  await iris.page.click('.rl-x-back');
+  await until(iris, () => !document.querySelector('.rl-room').classList.contains('rl-expanded'));
   await stageHasTile(iris, uriOf('tall1'));
-  await full.click();
-  await until(iris, (u) => document.querySelector(`.rl-tile[data-uri="${u}"]`).classList.contains('rl-tile-fill'), uriOf('tall1'));
+  await expandBtn.click();
+  await until(iris, () => document.querySelector('.rl-room').classList.contains('rl-expanded'));
+  await iris.page.waitForTimeout(500);
   await iris.page.keyboard.press('Escape');
+  await until(iris, () => !document.querySelector('.rl-room').classList.contains('rl-expanded'));
   await stageHasTile(iris, uriOf('tall1'));
-  assert.equal(await full.textContent(), 'Full screen');
 
   step('Close for everyone on the staged tile: the stage is empty on every page');
   await tileCard(nick, 'tall1').locator('.rl-tile-close').click();

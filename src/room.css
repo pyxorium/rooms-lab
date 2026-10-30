@@ -177,10 +177,53 @@
 .rl-ta-words { display: flex; flex-direction: column; min-width: 0; }
 .rl-ta-handle { color: var(--rl-text); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rl-ta-name { color: var(--rl-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Step 9b: "fill the window" where the browser has no real full screen (an iPhone), and the joining note. */
-.rl-tile.rl-tile-fill { position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important;
-  height: 100dvh !important; z-index: 1000; border-radius: 0; border: 0; padding: 8px; display: flex; flex-direction: column; background: var(--rl-panel); }
-.rl-tile-fill .rl-tile-body { flex: 1 1 auto; min-height: 0; }
-.rl-tile-fill .rl-tile-frame { height: 100% !important; }
+/* Step 9b: the joining note. ("Fill the window" for iPhones is gone since 0.12.0: Expand does it, RR19.) */
 .rl-tile-joining { margin: 0 0 6px; font-size: 13px; color: var(--rl-muted); }
 .rl-tile-joining[hidden] { display: none; }
+
+/* 0.12.0: Expand (claude/raku-rooms-step3.md, RR15 to RR21). Your own view: the stage, the room bar and the staged
+   card are laid over the room's area (the page sets --rl-x-*: the stage's box, the bar's top), nothing moves. */
+.rl .rl-stage-expand { min-height: 30px; padding: 2px 10px; font-size: 13px; }
+.rl-xbar { display: none; }
+.rl-expanded .rl-stage { position: fixed; top: var(--rl-x-t); left: var(--rl-x-l); width: var(--rl-x-w); height: var(--rl-x-h);
+  z-index: 40; border: 0; border-radius: 0; }
+.rl-expanded .rl-stage .rl-stage-area { aspect-ratio: auto; flex: 1 1 auto; min-height: 0; }
+.rl-expanded .rl-stage:not(:fullscreen) .rl-stage-bar { display: none; }
+.rl-expanded .rl-tile.rl-tile-on-stage:not(:fullscreen) { z-index: 41; border-radius: 0; border-width: 0; }
+.rl-expanded .rl-xbar {
+  display: flex; align-items: center; gap: 8px; position: fixed; z-index: 45;
+  top: var(--rl-xb-t); left: var(--rl-x-l); width: var(--rl-x-w); height: 44px; padding: 0 8px;
+  background: var(--rl-well); border-bottom: 1px solid var(--rl-line);
+}
+.rl-expanded.rl-x-bottom .rl-xbar { border-bottom: 0; border-top: 1px solid var(--rl-line); }
+.rl .rl-xbar button { min-height: 32px; padding: 2px 10px; font-size: 13px; white-space: nowrap; flex: none; }
+.rl-x-what { flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center; gap: 8px; }
+.rl-x-caption, .rl-x-status { min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-x-caption { color: var(--rl-muted); }
+.rl-x-status { color: var(--rl-text); }
+.rl-x-caption[hidden], .rl-x-status[hidden] { display: none; }
+.rl-x-people { flex: none; display: inline-flex; align-items: center; }   /* never squeezed under the buttons */
+.rl-x-chips { display: flex; gap: 4px; min-width: 0; max-width: 46vw; overflow: hidden; }
+.rl-x-chip { flex: none; display: inline-flex; align-items: center; gap: 5px; max-width: 150px; padding: 2px 8px; font-size: 12px;
+  border: 1px solid var(--rl-line); border-radius: 999px; color: var(--rl-muted); }
+.rl-x-chip.rl-talking { border-color: var(--rl-glaze); color: var(--rl-text); }
+.rl-x-chip .rl-dot { width: 8px; height: 8px; }
+.rl-x-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rl-x-count { font-size: 12px; white-space: nowrap; padding: 2px 9px; border: 1px solid var(--rl-line); border-radius: 999px; color: var(--rl-muted); }
+.rl-x-count.rl-talking { border-color: var(--rl-glaze); color: var(--rl-text); box-shadow: 0 0 0 3px rgba(63, 184, 168, .25); }
+.rl-x-mic[aria-pressed="true"] { border-color: var(--rl-glaze); color: var(--rl-glaze); }
+.rl-xbar .rl-x-back { border-color: var(--rl-glaze); }
+/* The host's requests (and "asks to see your screen") float over the stage's corner, so nothing waits unseen. */
+.rl-expanded .rl-approvals, .rl-expanded .rl-prompt {
+  position: fixed; z-index: 50; right: calc(var(--rl-x-r) + 10px); width: min(380px, calc(var(--rl-x-w) - 20px));
+  max-height: calc(var(--rl-x-h) - 64px); overflow: auto; margin: 0; box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
+}
+.rl-expanded .rl-approvals { top: calc(var(--rl-x-t) + 52px); }   /* under a staged card's header (its host buttons stay usable) */
+.rl-expanded .rl-prompt { bottom: calc(var(--rl-x-b) + 10px); }
+.rl-expanded.rl-x-bottom .rl-prompt { bottom: auto; top: calc(var(--rl-x-t) + 52px); }
+@media (max-width: 640px) {
+  .rl-expanded .rl-xbar { gap: 5px; }
+  .rl .rl-xbar button { padding: 2px 7px; font-size: 12px; }
+  .rl-x-count { padding: 2px 7px; }
+  .rl-expanded .rl-xbar { padding: 0 6px calc(env(safe-area-inset-bottom, 0px)); height: calc(44px + env(safe-area-inset-bottom, 0px)); }
+}

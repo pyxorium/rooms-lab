@@ -53,3 +53,19 @@ export const fullScreenNow = (doc) => doc?.fullscreenElement || doc?.webkitFulls
 export function leaveFullScreen(doc) {
   try { (doc.exitFullscreen || doc.webkitExitFullscreen)?.call(doc); } catch { /* not full screen */ }
 }
+
+// Expand (0.12.0; claude/raku-rooms-step3.md, RR15 to RR21): your own view only. The stage grows over the room,
+// which folds into one slim room bar; you stay expanded while the stage changes (RR17) and fold back when it's
+// empty (or hidden on your page). Full screen stays as it is, for the whole monitor.
+export const EXPAND = 'Expand';
+export const BACK_TO_ROOM = 'Back to the room';
+/** Can this be expanded right now (the button shows)? A tile or a screen on the stage. */
+export const canExpand = (what) => what === 'tile' || what === 'screen';
+/** Stay expanded? Yes while the stage shows something, or something is on its way to it. */
+export const staysExpanded = (what) => what === 'tile' || what === 'screen' || what === 'waiting' || what === 'tile-coming';
+/** The room bar's count, on a narrow window or when the people don't fit. */
+export const hereCount = (n) => `${n} here`;
+/** How long a status line stays in the room bar before the name comes back. */
+export const BAR_STATUS_MS = 5000;
+/** Where the room bar goes: at the bottom on a phone (RR19), at the top otherwise. */
+export const PHONE_WIDTH = '(max-width: 640px)';

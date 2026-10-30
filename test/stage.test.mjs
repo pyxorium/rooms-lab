@@ -85,3 +85,26 @@ test('handle suggestions: only for what looks like the start of a handle; the se
   assert.deepEqual(await searchActors('nick', async () => { throw new Error('offline'); }), [], 'offline: no suggestions, no error');
   assert.deepEqual(await searchActors('nick', async () => ({ ok: false })), []);
 });
+
+// 0.12.0: Expand (claude/raku-rooms-step3.md, RR15 to RR21).
+test('Expand: a tile or a screen can be expanded; you stay expanded while something is on (or coming); empty or hidden folds back', async () => {
+  const { canExpand, staysExpanded, hereCount, EXPAND, BACK_TO_ROOM, BAR_STATUS_MS, PHONE_WIDTH } = await import('../src/stage.js');
+  for (const w of ['tile', 'screen']) { assert.equal(canExpand(w), true, w); assert.equal(staysExpanded(w), true, w); }
+  for (const w of ['waiting', 'tile-coming']) { assert.equal(canExpand(w), false, w); assert.equal(staysExpanded(w), true, w); }   // RR17: follow the stage
+  for (const w of ['empty', 'tile-hidden', undefined]) { assert.equal(canExpand(w), false, w); assert.equal(staysExpanded(w), false, w); }
+  assert.equal(hereCount(4), '4 here');
+  assert.equal(EXPAND, 'Expand');
+  assert.equal(BACK_TO_ROOM, 'Back to the room');
+  assert.ok(BAR_STATUS_MS >= 3000 && BAR_STATUS_MS <= 8000);
+  assert.equal(PHONE_WIDTH, '(max-width: 640px)');   // Raku's phone layout (its style.css)
+});
+
+test('the strip: no "fill the window" any more (RR19); Expand and the room bar\'s Full screen are there', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const strip = await readFile(new URL('../src/tile-strip.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../src/room.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(strip, /rl-tile-fill|setFill/);
+  assert.doesNotMatch(css, /\.rl-tile-fill/);
+  assert.match(strip, /text: 'Expand'/);
+  assert.match(strip, /toggleFull\(uri\)/);
+});

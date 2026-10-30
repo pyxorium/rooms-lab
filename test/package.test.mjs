@@ -40,7 +40,7 @@ test('the hosting hooks are there (Raku): its own join screen, links, no lab chr
   page.keepHostKey(session, 'abcdefghijkm', null);
   assert.equal(page.keptHostKey(session, 'abcdefghijkm'), null);
   const src = readFileSync(new URL('../src/room-page.js', import.meta.url), 'utf8');
-  for (const hook of ['joinScreen', 'links', 'chrome', 'turnOnly', 'onJoined', 'onPeople', 'onOver']) assert.match(src, new RegExp(`\\b${hook}:`), hook);
+  for (const hook of ['joinScreen', 'links', 'chrome', 'turnOnly', 'onJoined', 'onPeople', 'onOver', 'expandArea', 'onExpand']) assert.match(src, new RegExp(`\\b${hook}:`), hook);
   // A host page's address is never read or rewritten by the room.
   assert.match(src, /const ownAddress = !o\.links && !o\.joinScreen;/);
   assert.match(src, /if \(ownAddress\) \{ try \{ o\.history\?\.replaceState/);

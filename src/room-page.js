@@ -58,6 +58,16 @@
 // code, the name and (signed in) the pass; `links` builds the invite and host links; `chrome: false` leaves out
 // the lab's heading and footer; onJoined / onPeople / onOver tell the host page how the room is going. The lab
 // page passes none of these and behaves as before.
+//
+// Expand (0.12.0; claude/raku-rooms-step3.md, RR15 to RR21): each person's own view. "Expand" (the stage's bar for a
+// screen, the staged card for a tile) grows the stage over the room's area: the viewport, or the element the host
+// page gives (`expandArea`, Raku's tab area). The rest of the room folds into one slim room bar (the page's badge
+// and what's on, the people with their talking rings or "4 here", Mute, Full screen, Back to the room; at the bottom
+// on a phone); the host's approval cards and the "asks to see your screen" prompt float over a corner. Nothing
+// moves in the page: the stage, the bar and the staged card are laid over the area with fixed positions, so no
+// frame reloads and the call carries on. The stage changing keeps you expanded (RR17); an empty stage folds back.
+// Escape folds back (in real full screen it leaves full screen first). `onExpand(on)` lets the host page hide its
+// own rows meanwhile (Raku: the address row in the installed window, the top and bottom bars on a phone).
 import { connectRoom } from './room-link.js';
 import { createMesh } from './mesh.js';
 import { createLevels } from './levels.js';
@@ -72,7 +82,8 @@ import { createTileStrip, MAX_TILES } from './tile-strip.js';
 import { relayUrl, ICE_SERVERS, TIMES } from './config.js';
 import { createLiveTiles, readPeerLive } from './live.js';
 import { parseAddress, HINT } from './address.js';
-import { whatsOnStage, afterPresenterChange, stageLines, EMPTY_LINE, EMPTY_HINT_HOST, EMPTY_HINT_GUEST, fullScreenCall, fullScreenNow, leaveFullScreen } from './stage.js';
+import { whatsOnStage, afterPresenterChange, stageLines, EMPTY_LINE, EMPTY_HINT_HOST, EMPTY_HINT_GUEST, fullScreenCall, fullScreenNow, leaveFullScreen,
+  EXPAND, BACK_TO_ROOM, canExpand, staysExpanded, hereCount, BAR_STATUS_MS, PHONE_WIDTH } from './stage.js';
 import { attachTypeahead } from './typeahead.js';
 import { createNewTileWatcher, offerWords, POLL_MS as NEW_TILE_POLL_MS, LIST_LIMIT as NEW_TILE_LIST } from './new-tiles.js';
 
@@ -149,6 +160,10 @@ const DEFAULTS = {
   onJoined: null,          // ({ code, host }) each time the relay lets this page in
   onPeople: null,          // ([{ peer, name, verified, host, away, me }]) whenever the people here change
   onOver: null,            // ({ code, why, again, reason }) when this page leaves the room (or is taken out)
+  // Expand (0.12.0): the element whose box an expanded stage fills (null: the whole window), and a hook told
+  // when this page expands or folds back (the host page may hide its own rows meanwhile).
+  expandArea: null,        // () → Element
+  onExpand: null,          // (on: boolean)
 };
 
 const get = (s, k) => { try { return s?.getItem(k) ?? null; } catch { return null; } };
@@ -394,6 +409,8 @@ export function mountRoomPage(root, options = {}) {
       talking: new Set(),
       log: [],
       over: false,
+      expanded: false,             // 0.12.0: this person's own view (never sent, never kept)
+      barStatus: null,             // a status line showing in the room bar, for a few seconds
     };
     const els = buildRoom(r);
     view.replaceChildren(els.section);
@@ -415,6 +432,9 @@ export function mountRoomPage(root, options = {}) {
         off: () => setStage(null),
         offLabel: () => (r.presenter ? 'Back to screen' : 'Take off stage'),
         full: (el) => fullScreenCall(el),
+        expand: () => expand(),
+        expanded: () => r.expanded,
+        refused: () => say('Full screen wasn\u2019t allowed.'),
       },
       onUpdate: (uri) => {
         if (uri !== r.stageTile) return;
@@ -470,9 +490,20 @@ export function mountRoomPage(root, options = {}) {
     r.placer?.observe(els.stage);
     r.onResize = () => renderStage();        // a phone turned: the stage's shape may change (step 9b)
     globalThis.addEventListener?.('resize', r.onResize);
-    r.onFull = () => { renderStage(); r.strip.refresh(); };
+    r.onFull = () => { r.fullAt = Date.now(); renderStage(); r.strip.refresh(); };
     globalThis.document?.addEventListener('fullscreenchange', r.onFull);
     globalThis.document?.addEventListener('webkitfullscreenchange', r.onFull);
+    // Escape folds an expanded stage back (RR21). In real full screen the browser takes Escape to leave full
+    // screen, which lands back in the expanded view; an Escape right after that change is ignored.
+    r.onKey = (ev) => {
+      if (ev.key !== 'Escape' || !r.expanded || room !== r) return;
+      const doc = r.els.stage.ownerDocument;
+      if (fullScreenNow(doc) || Date.now() - (r.fullAt || 0) < 400) return;
+      collapse();
+    };
+    globalThis.document?.addEventListener('keydown', r.onKey);
+    // The area an expanded stage fills can change size (the host page hiding its rows, a window resized).
+    r.areaWatch = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (r.expanded) renderStage(); }) : null;
     renderNet();
     say('Connecting to the room…');
     render();
@@ -545,11 +576,25 @@ export function mountRoomPage(root, options = {}) {
     els.stageBadge = h('span', { class: 'rl-stage-badge', hidden: true });
     els.caption = h('span', { class: 'rl-caption' });
     els.full = h('button', { type: 'button', class: 'rl-stage-full', hidden: true, onclick: () => toggleScreenFull() }, 'Full screen');
+    els.expand = h('button', { type: 'button', class: 'rl-stage-expand', hidden: true, onclick: () => expand() }, EXPAND);
     els.emptyLine = h('p', { class: 'rl-stage-line' });
     els.emptyHint = h('p', { class: 'rl-stage-hint' });
     els.empty = h('div', { class: 'rl-stage-empty' }, els.emptyLine, els.emptyHint);
     els.area = h('div', { class: 'rl-stage-area' }, els.video, els.empty);
-    els.stage = h('div', { class: 'rl-stage' }, h('div', { class: 'rl-stage-bar' }, els.stageBadge, els.caption, els.full), els.area);
+    els.stage = h('div', { class: 'rl-stage' }, h('div', { class: 'rl-stage-bar' }, els.stageBadge, els.caption, els.expand, els.full), els.area);
+    // The room bar (0.12.0, RR18): the folded room while the stage is expanded. Hidden otherwise.
+    els.xBadge = h('span', { class: 'rl-stage-badge', hidden: true });
+    els.xCaption = h('span', { class: 'rl-x-caption' });
+    els.xStatus = h('span', { class: 'rl-x-status', role: 'status', 'aria-live': 'polite', hidden: true });
+    els.xChips = h('span', { class: 'rl-x-chips' });
+    els.xCount = h('span', { class: 'rl-x-count', hidden: true });
+    els.xMic = h('button', { type: 'button', class: 'rl-x-mic', 'aria-pressed': 'false', onclick: () => toggleMic() }, 'Unmute');
+    els.xFull = h('button', { type: 'button', class: 'rl-x-full', hidden: true, onclick: () => barFull() }, 'Full screen');
+    els.xBack = h('button', { type: 'button', class: 'rl-x-back', onclick: () => collapse() }, BACK_TO_ROOM);
+    els.xbar = h('div', { class: 'rl-xbar', role: 'toolbar', 'aria-label': 'The room' },
+      h('span', { class: 'rl-x-what' }, els.xBadge, els.xCaption, els.xStatus),
+      h('span', { class: 'rl-x-people' }, els.xChips, els.xCount),
+      els.xMic, els.xFull, els.xBack);
     els.mic = h('button', { type: 'button', class: 'rl-mic', 'aria-pressed': 'false', onclick: () => toggleMic() }, 'Unmute');
     // While "The host said you can present" is open, Share my screen does what its button does (the picker).
     els.share = h('button', { type: 'button', class: 'rl-share', onclick: () => (r.screenTrack ? stopShare('You stopped sharing.') : r.prompt?.type === 'go' ? startShare(r.prompt) : wish('present')) }, 'Share my screen');
@@ -573,6 +618,7 @@ export function mountRoomPage(root, options = {}) {
       els.net,
       els.approvals,
       els.stage,
+      els.xbar,
       h('div', { class: 'rl-controls' }, els.mic, els.share),
       els.prompt,
       h('section', { class: 'rl-tiles' },
@@ -591,7 +637,12 @@ export function mountRoomPage(root, options = {}) {
     return els;
   }
 
-  const say = (text) => { if (room) room.els.status.textContent = text; };
+  const say = (text) => {
+    const r = room;
+    if (!r) return;
+    r.els.status.textContent = text;
+    if (r.expanded && text) barSay(text);     // while expanded, the room bar shows it for a few seconds (RR18)
+  };
   // A person as the page's messages say it: "@handle" (signed in) or the typed name.
   const shown = (p) => (p ? (p.verified ? `@${p.name}` : p.name) : 'Someone');
   const nameOf = (peer) => (peer === room?.me ? 'You' : shown(room?.people.get(peer)));
@@ -1167,9 +1218,11 @@ export function mountRoomPage(root, options = {}) {
     const box = r.els.stage.getBoundingClientRect();
     const base = r.els.section.getBoundingClientRect();
     const px = (n) => `${Math.round(n)}px`;
-    el.style.position = 'absolute';
-    el.style.top = px(box.top - base.top);
-    el.style.left = px(box.left - base.left);
+    // Expanded, the stage is fixed over the room's area, so the card is too (still the same element: no reload).
+    const fixed = r.expanded;
+    el.style.position = fixed ? 'fixed' : 'absolute';
+    el.style.top = px(fixed ? box.top : box.top - base.top);
+    el.style.left = px(fixed ? box.left : box.left - base.left);
     el.style.width = px(box.width);
     el.style.height = px(box.height);
   }
@@ -1180,6 +1233,101 @@ export function mountRoomPage(root, options = {}) {
     if (fullScreenNow(doc) === r.els.stage) { leaveFullScreen(doc); return; }
     const go = fullScreenCall(r.els.stage, r.els.video);
     if (go) Promise.resolve().then(go).catch(() => say('Full screen wasn\u2019t allowed.'));
+  }
+
+  // ---- Expand (0.12.0, RR15 to RR21) ----
+  function expand() {
+    const r = room;
+    if (!r || r.expanded || !canExpand(r.els.stage.dataset.on)) return;
+    r.expanded = true;
+    r.els.section.classList.add('rl-expanded');
+    const area = o.expandArea?.();
+    if (area) r.areaWatch?.observe(area);
+    note('\u2197', null, 'expanded the stage (on this page only)');
+    try { o.onExpand?.(true); } catch (err) { console.error('[rooms-lab] onExpand', err); }
+    renderStage(); r.strip.refresh(); renderPeople();
+    r.els.xBack.focus?.({ preventScroll: true });
+  }
+  function collapse() {
+    const r = room;
+    if (!r || !r.expanded) return;
+    r.expanded = false;
+    r.areaWatch?.disconnect();
+    clearTimeout(r.barStatus?.timer); r.barStatus = null;
+    r.els.section.classList.remove('rl-expanded');
+    for (const k of ['--rl-x-t', '--rl-x-l', '--rl-x-w', '--rl-x-h', '--rl-x-r', '--rl-x-b', '--rl-xb-t']) r.els.section.style.removeProperty(k);
+    const doc = r.els.stage.ownerDocument;
+    if (fullScreenNow(doc)) leaveFullScreen(doc);
+    note('\u2199', null, 'back to the room');
+    try { o.onExpand?.(false); } catch (err) { console.error('[rooms-lab] onExpand', err); }
+    renderStage(); r.strip.refresh();
+  }
+  // The box an expanded stage fills: the host page's area, or the window. The room bar takes a slim row of it (at
+  // the bottom on a phone), the stage the rest; the floating cards go in the stage's corner.
+  function placeExpanded() {
+    const r = room;
+    const win = globalThis;
+    const a = o.expandArea?.()?.getBoundingClientRect?.() || { top: 0, left: 0, width: win.innerWidth || 0, height: win.innerHeight || 0 };
+    const barH = r.els.xbar.offsetHeight || 44;
+    const atBottom = !!win.matchMedia?.(PHONE_WIDTH)?.matches;
+    const top = atBottom ? a.top : a.top + barH;
+    const h = Math.max(0, a.height - barH);
+    const s = r.els.section.style;
+    const px = (n) => `${Math.round(n)}px`;
+    s.setProperty('--rl-x-t', px(top));
+    s.setProperty('--rl-x-l', px(a.left));
+    s.setProperty('--rl-x-w', px(a.width));
+    s.setProperty('--rl-x-h', px(h));
+    s.setProperty('--rl-x-r', px(Math.max(0, (win.innerWidth || 0) - a.left - a.width)));
+    s.setProperty('--rl-x-b', px(Math.max(0, (win.innerHeight || 0) - top - h)));
+    s.setProperty('--rl-xb-t', px(atBottom ? a.top + h : a.top));
+    r.els.section.classList.toggle('rl-x-bottom', atBottom);
+  }
+  // Full screen from the room bar: the screen's stage, or the staged tile's card.
+  function barFull() {
+    const r = room;
+    if (!r) return;
+    if (r.els.stage.dataset.on === 'tile' && r.stageTile) r.strip.toggleFull(r.stageTile);
+    else toggleScreenFull();
+  }
+  function barSay(text) {
+    const r = room;
+    clearTimeout(r.barStatus?.timer);
+    r.barStatus = { text, timer: setTimeout(() => { if (room === r) { r.barStatus = null; renderBar(); } }, BAR_STATUS_MS) };
+    renderBar();
+  }
+  // The room bar: the page's badge and what's on (or a status line for a few seconds), the people (chips with their
+  // talking rings, or "4 here" when they don't fit), Mute, Full screen, Back to the room.
+  function renderBar() {
+    const r = room;
+    if (!r || !r.expanded) return;
+    const { xBadge, xCaption, xStatus, xChips, xCount, xMic, xFull, stageBadge, caption } = r.els;
+    xBadge.textContent = stageBadge.textContent;
+    xBadge.className = stageBadge.className;
+    xBadge.hidden = stageBadge.hidden;
+    xCaption.textContent = caption.textContent;
+    xStatus.textContent = r.barStatus?.text || '';
+    xStatus.hidden = !r.barStatus;
+    xCaption.hidden = !!r.barStatus;
+    const people = [...r.people.values()];
+    xChips.replaceChildren(...people.map((p) => h('span', { class: `rl-x-chip${r.talking.has(p.peer) ? ' rl-talking' : ''}`, 'data-peer': p.peer, title: r.talking.has(p.peer) ? 'talking' : '' },
+      h('span', { class: `rl-dot${r.talking.has(p.peer) ? ' rl-talking' : ''}` }),
+      h('span', { class: 'rl-x-name' }, p.peer === r.me ? 'You' : shown(p)))));
+    xCount.textContent = hereCount(people.length);
+    xCount.classList.toggle('rl-talking', people.some((p) => r.talking.has(p.peer)));
+    // Chips when they fit, else the count (a narrow window, a phone).
+    xChips.hidden = false; xCount.hidden = true;
+    const narrow = !!globalThis.matchMedia?.('(max-width: 700px)')?.matches;
+    if (narrow || xChips.scrollWidth > xChips.clientWidth + 1) { xChips.hidden = true; xCount.hidden = false; }
+    xMic.textContent = r.els.mic.textContent;
+    xMic.setAttribute('aria-pressed', r.els.mic.getAttribute('aria-pressed'));
+    const doc = r.els.stage.ownerDocument;
+    const what = r.els.stage.dataset.on;
+    const tile = what === 'tile' && r.stageTile;
+    const can = tile ? r.strip.canFull(r.stageTile) : what === 'screen' && !!fullScreenCall(r.els.stage, r.els.video);
+    const on = tile ? r.strip.isFull(r.stageTile) : fullScreenNow(doc) === r.els.stage;
+    xFull.hidden = !can;
+    xFull.textContent = on ? 'Exit full screen' : 'Full screen';
   }
 
   // The host back after a reload (or a relay restart): the tiles they had open, for everyone again. A reload
@@ -1386,6 +1534,7 @@ export function mountRoomPage(root, options = {}) {
     r.els.tileButton.disabled = !r.link?.joined;
     r.strip?.refresh();
     leaveBtn.hidden = r.host;
+    renderBar();
   }
 
   function renderStage() {
@@ -1423,10 +1572,22 @@ export function mountRoomPage(root, options = {}) {
     emptyHint.textContent = what === 'empty' ? (r.host ? EMPTY_HINT_HOST : EMPTY_HINT_GUEST) : '';
     empty.hidden = what === 'screen' || what === 'tile';
     const doc = r.els.stage.ownerDocument;
-    full.hidden = what !== 'screen' || !fullScreenCall(r.els.stage, video);
-    full.textContent = fullScreenNow(doc) === r.els.stage ? 'Exit full screen' : 'Full screen';
     r.els.stage.dataset.on = what;
+    // RR17: the stage changing keeps you expanded; an empty stage (or a tile you hid) folds back.
+    if (r.expanded && !staysExpanded(what)) { collapse(); return; }
+    const fullNow = fullScreenNow(doc) === r.els.stage;
+    // While expanded the room bar has Full screen; the stage's own bar shows only in real full screen (to exit).
+    full.hidden = what !== 'screen' || !fullScreenCall(r.els.stage, video) || (r.expanded && !fullNow);
+    full.textContent = fullNow ? 'Exit full screen' : 'Full screen';
+    r.els.expand.hidden = r.expanded || !canExpand(what) || what === 'tile' || fullNow;   // a tile's is on its card
     r.els.stage.classList.toggle('rl-empty', what !== 'screen');
+    if (r.expanded) {
+      placeExpanded();
+      shapeStage(null);            // the tall phone stage doesn't apply: the stage fills the area
+      placeStaged();
+      renderBar();
+      return;
+    }
     placeStaged();                 // first at the stage's width (the card's header wraps as it will there)…
     shapeStage(what);              // …so its measured header is right for the tall phone stage…
     placeStaged();                 // …then over the stage's final size
@@ -1487,8 +1648,11 @@ export function mountRoomPage(root, options = {}) {
   function leave(why, { quiet = false, again = null, reason = null } = {}) {
     const r = room;
     if (!r) return;
+    if (r.expanded) collapse();       // the host page gets its rows back first
     r.over = true;
     r.placer?.disconnect();
+    r.areaWatch?.disconnect();
+    globalThis.document?.removeEventListener('keydown', r.onKey);
     r.newTiles?.stop();
     globalThis.document?.removeEventListener('visibilitychange', r.onVisible);
     globalThis.removeEventListener?.('resize', r.onResize);

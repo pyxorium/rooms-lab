@@ -68,7 +68,7 @@ checks (`npm run dev`).
    **9b.** On a phone held upright, a tile on the stage gets a tall box: the tile's own height (as in the
    list), at most about three-quarters of the screen (a screen being shared stays 16:9; so does everything
    on a laptop or a phone turned sideways). Where the browser has no full screen (an iPhone), **Full screen**
-   fills the window instead (Escape or Exit to go back). A live tile whose page hasn't been counted by the
+   filled the window instead (replaced by Expand in 0.12.0, item 13). A live tile whose page hasn't been counted by the
    host's page yet keeps asking every couple of seconds, and its card says "Joining the live room…"
    meanwhile (a phone's one request was lost in the owner's test). The Screen badge is cream (amber means
    "attention" on this page).
@@ -103,6 +103,17 @@ checks (`npm run dev`).
    `scripts/copy-to-site.mjs` and the site checks are gone; the relay lets in only Raku (and Raku on this computer).
    The host's house line is plainer: "House rules: when a guest asks for something, you decide." (the rule set's
    own name stays in the room's log).
+13. **Expand** (version 0.12.0, Oct 2026; `claude/raku-rooms-step3.md`, RR15 to RR21): each person's own view. **Expand**
+   (on the staged tile's card, or in the stage's bar for a screen) grows the stage over the room's area (the window,
+   or the area the host page gives: `expandArea`; Raku's tab area). The rest of the room folds into one slim room
+   bar: the page's Tile / Screen badge and what's on (status lines show there for a few seconds), the people as
+   chips with their talking rings (or "4 here" when they don't fit), Mute, Full screen, **Back to the room**; at
+   the bottom on a phone. The host's approval cards (and "asks to see your screen") float over the stage's corner.
+   Nothing moves in the page (the stage, the bar and the staged card are laid over the area with fixed positions),
+   so no tile reloads and the call carries on. The stage changing keeps you expanded; an empty stage (or a tile
+   you hid) folds you back. Escape folds back (in real full screen, Escape leaves full screen first). Not kept
+   across a reload. Where there's no real full screen (iPhones), Expand is the one button: "fill the window" is
+   gone. `onExpand(on)` tells the host page, which may hide its own rows meanwhile (Raku does).
 
 ## Try it on this computer
 
@@ -353,7 +364,8 @@ and nothing is kept: when the room ends, they're gone.
   account server, a stand-in sign-in library that keeps sessions in the library's own store
   (`test/browser/signin-standin.js`), the lobby against the approved mockup, the host by account, one
   connection per account, the Daisy warning, the handle suggestions, and no DID ever reaching a page. It
-  needs Bluesky's packages (`npm install` in `relay\`). `test/browser/check_stage.mjs` runs the stage (step
+  needs Bluesky's packages (`npm install` in `relay\`). `test/browser/check_expand.mjs` runs Expand (0.12.0: the room bar, following the stage, the host's floating
+  request, Full screen from the bar and back, Escape, folding back when the stage empties). `test/browser/check_stage.mjs` runs the stage (step
   9): tiles on and off it on three pages, the badges, the box keeping its size, full screen, a screen taking
   the stage back, a newcomer and a host reload, a forged "stage" message, phone width.
 

@@ -24,6 +24,11 @@
 // page lays it over the stage's box (`elementOf`), and a slim line keeps its place in the list ("Tile Poll: on
 // the stage ↑"). On the stage the card shows the page's own "Tile" badge, the host's "Take off stage" (or "Back
 // to screen" while someone shares a screen) and "Full screen"; off it, the host's "Put on stage".
+//
+// Expand (0.12.0; claude/raku-rooms-step3.md, RR15 to RR21): the staged card also has "Expand", which the room
+// page answers by growing the stage over the room (your own view only). While expanded the card's own Full screen
+// steps aside (the room bar has it), and "Expand" hides. Where the browser has no real full screen (iPhones),
+// Expand is the one button: "fill the window" (step 9b) is gone (RR19).
 import { parseTileUri } from './tile-records.js';
 
 export const MAX_TILES = 6;
@@ -32,7 +37,7 @@ const PREVIEW_NOTE = 'Only you can see this (unless you’re sharing your whole 
 export const sizeText = (n) => (!(n > 0) ? '' : n < 1024 ? `${n} bytes` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
 const NO_LIVE = { info: () => ({ spoke: false, live: false, asking: false, joining: false }), share: () => {}, stop: () => {}, ask: () => {} };
-const NO_STAGE = { put: () => {}, off: () => {}, offLabel: () => 'Take off stage', full: null };
+const NO_STAGE = { put: () => {}, off: () => {}, offLabel: () => 'Take off stage', full: null, expand: null, expanded: () => false, refused: () => {} };
 
 export function createTileStrip({ mount, records, hide, tileHost = null, h, nameOf = () => 'Someone', isHost = () => false,
   onCloseForEveryone = () => {}, onNote = () => {}, live = NO_LIVE, onRemoved = () => {}, stage = NO_STAGE, onUpdate = () => {} }) {
@@ -79,9 +84,12 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     return [
       { text: 'Put on stage', cls: 'rl-primary rl-tile-stage-on', hidden: () => !isHost() || on(), onclick: () => stage.put(e.uri) },
       { text: 'Take off stage', label: () => stage.offLabel(), cls: 'rl-tile-stage-off', hidden: () => !isHost() || !on(), onclick: () => stage.off() },
-      // Full screen; where the browser has none (an iPhone), "fill the window" instead (step 9b).
+      // Expand (RR21): the stage grows over the room, for this person only.
+      { text: 'Expand', cls: 'rl-tile-expand', hidden: () => !on() || !stage.expand || isFull(e) || !!stage.expanded?.(), onclick: () => stage.expand() },
+      // Full screen, where the browser has a real one; while expanded the room bar has it (RR18), but the card keeps
+      // "Exit full screen" while it is full screen.
       { text: 'Full screen', label: () => (isFull(e) ? 'Exit full screen' : 'Full screen'), cls: 'rl-tile-full',
-        hidden: () => !on(), onclick: () => toggleFull(e) },
+        hidden: () => !on() || (!isFull(e) && (!canFull(e) || !!stage.expanded?.())), onclick: () => toggleFull(e) },
       { text: 'Share live with the room', cls: 'rl-primary rl-tile-live-on', hidden: () => !isHost() || !info().spoke || info().live,
         disabled: () => info().asking, onclick: () => live.share(e.uri) },
       { text: 'Ask to share live', cls: 'rl-tile-live-ask', hidden: () => isHost() || !info().spoke || info().live,
@@ -93,25 +101,13 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     ];
   }
   const fullNow = () => (typeof document === 'undefined' ? null : document.fullscreenElement || document.webkitFullscreenElement || null);
-  const isFull = (e) => fullNow() === e.el || e.el.classList.contains('rl-tile-fill');
-  function setFill(e, on) {
-    if (e.el.classList.contains('rl-tile-fill') === on) return;
-    e.el.classList.toggle('rl-tile-fill', on);
-    paintButtons(e);
-    onUpdate(e.uri);
-  }
+  const isFull = (e) => fullNow() === e.el;
+  const canFull = (e) => !!stage.full?.(e.el);
   function toggleFull(e) {
     if (fullNow() === e.el) { try { (document.exitFullscreen || document.webkitExitFullscreen)?.call(document); } catch { /* fine */ } return; }
-    if (e.el.classList.contains('rl-tile-fill')) { setFill(e, false); return; }
     const go = stage.full?.(e.el);
-    if (go) Promise.resolve().then(go).catch(() => setFill(e, true));
-    else setFill(e, true);                // no full screen here: the card covers the window instead
+    if (go) Promise.resolve().then(go).catch(() => stage.refused?.());
   }
-  // Escape leaves "fill the window" too (real full screen handles it itself).
-  globalThis.document?.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Escape') return;
-    for (const e of entries.values()) setFill(e, false);
-  });
   function setButtons(e, list) {
     e.buttons = list.map((b) => ({ ...b, el: h('button', { type: 'button', class: b.cls || '', onclick: () => b.onclick(e) }, b.text) }));
     e.actions.replaceChildren(...e.buttons.map((b) => b.el));
@@ -239,7 +235,7 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
         e.placeholder = h('li', { class: 'rl-tile-placeholder', 'data-uri': e.uri }, ...placeholderWords(e.rec?.name));
         e.el.before(e.placeholder);
       } else if (!on && e.placeholder) { e.placeholder.remove(); e.placeholder = null; }
-      if (!on) { for (const k of ['position', 'top', 'left', 'width', 'height']) e.el.style.removeProperty(k); e.el.classList.remove('rl-tile-fill'); }
+      if (!on) for (const k of ['position', 'top', 'left', 'width', 'height']) e.el.style.removeProperty(k);
       paintButtons(e);
     }
   }
@@ -265,6 +261,10 @@ export function createTileStrip({ mount, records, hide, tileHost = null, h, name
     by: (uri) => entries.get(uri)?.by ?? null,
     /** The tile's declared size ({ width, height } from its record), or null. */
     sizing: (uri) => entries.get(uri)?.rec?.sizing ?? null,
+    /** Full screen for a tile's card (the room bar's button while expanded), and whether this browser has one. */
+    toggleFull(uri) { const e = entries.get(uri); if (e) toggleFull(e); },
+    canFull: (uri) => { const e = entries.get(uri); return !!e && canFull(e); },
+    isFull: (uri) => { const e = entries.get(uri); return !!e && isFull(e); },
     /** The buttons follow who's host, who's asking, and whether the tile is running. */
     refresh() { for (const e of entries.values()) paintButtons(e); },
     /** A line under a preview's status ("Asked the host…"). */
