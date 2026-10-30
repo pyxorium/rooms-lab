@@ -15,11 +15,11 @@ primary_region = 'sjc'
 
 [env]
   PORT = '8080'
-  # Pages allowed to use the relay (comma-separated): the lab page on thunderbird.cafe and the site's local
-  # dev server (http://127.0.0.1:4321), so the lab can be tried against the real relay from `npm run dev`;
-  # since 0.11.0 Raku (https://raku.lexicographer.space) and Raku on this computer (`npm run dev` at
-  # http://127.0.0.1:5180, `npm run preview` at http://127.0.0.1:5181). The origin check is a courtesy, not a lock.
-  ALLOWED_ORIGINS = 'https://thunderbird.cafe,http://127.0.0.1:4321,https://raku.lexicographer.space,http://127.0.0.1:5180,http://127.0.0.1:5181'
+  # Pages allowed to use the relay (comma-separated): Raku (https://raku.lexicographer.space), where rooms live,
+  # and Raku on this computer (`npm run dev` at http://127.0.0.1:5180, `npm run preview` at http://127.0.0.1:5181).
+  # The lab page on thunderbird.cafe retired Oct 29 2026 (rooms moved to Raku), so thunderbird.cafe and the site's
+  # dev server are no longer let in. The origin check is a courtesy, not a lock.
+  ALLOWED_ORIGINS = 'https://raku.lexicographer.space,http://127.0.0.1:5180,http://127.0.0.1:5181'
 
 [http_service]
   internal_port = 8080

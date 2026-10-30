@@ -1,5 +1,5 @@
 // tiles.mjs: what goes into the Rooms lab's own tiles (modelled on daisy-tiles/scripts/tiles.mjs), for
-// publish.mjs (the published records) and copy-to-site.mjs (the house, pinned):
+// publish.mjs (the published records; Raku pins the house, ROOMS.house in its src/config.js):
 //   house   the room's rules, hidden on the host's page
 //   poll    the live poll (live tiles): a demo tile opened for everyone by its address, then shared live.
 //           It names no address (it also shows up in Raku and the galleries, where it's a poll for one).

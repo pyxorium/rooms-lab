@@ -37,7 +37,7 @@ export const DEFAULTS = Object.freeze({
   host: '0.0.0.0',
   // Pages from other sites are turned away. Browsers always send Origin with a WebSocket; a client that
   // isn't a browser sends none and is let in (an origin check is a courtesy, not a lock).
-  allowedOrigins: ['https://thunderbird.cafe'],
+  allowedOrigins: ['https://raku.lexicographer.space'],   // rooms live in Raku (the lab page retired Oct 29 2026)
   maxConnections: 300,
   maxPerIp: 20,                       // a page opens one connection; a household shares one address
   // A frame bigger than this is refused by `ws` before it's read. rooms.js answers anything over 64 KB (in

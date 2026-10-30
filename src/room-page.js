@@ -96,6 +96,13 @@ const hostKeyKey = (room) => `rooms-lab-host:${room}`;   // sessionStorage: this
 const tilesKey = (room) => `rooms-lab-tiles:${room}`;    // sessionStorage: the host's tiles open for everyone (a reload keeps them)
 const meKey = (room) => `rooms-lab-me:${room}`;          // sessionStorage: this tab's peer id last time (a reload gets a new one)
 
+// The host's house line (0.11.1, RR14): the house tile is the room's rules.
+export const HOUSE_LINES = Object.freeze({
+  ready: 'House rules: when a guest asks for something, you decide.',
+  loading: 'Loading the house rules\u2026',
+  none: 'The house rules couldn\u2019t load, so you decide every request yourself.',
+});
+
 export const HONEST = [
   'This is a lab: a try-out, not a finished app.',
   '\u2713 means the handle was checked through sign-in; other names are typed.',
@@ -1359,9 +1366,8 @@ export function mountRoomPage(root, options = {}) {
     const line = r.els.houseLine;
     line.hidden = !r.host;
     const st = r.house?.status;
-    line.textContent = st === 'ready' ? `House: the room\u2019s rules (${r.house.rules}) decide each request; you approve where they say so.`
-      : st === 'loading' ? 'House: loading the room\u2019s rules\u2026'
-      : 'No house tile: you approve each request yourself.';
+    // The owner's words (0.11.1, claude/raku-rooms-plan.md RR14); the rule set's own name stays in the log.
+    line.textContent = st === 'ready' ? HOUSE_LINES.ready : st === 'loading' ? HOUSE_LINES.loading : HOUSE_LINES.none;
     line.dataset.house = st || 'off';
     if (st === 'ready' && r.house.frame) r.house.setState(houseState());
   }

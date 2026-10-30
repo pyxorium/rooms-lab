@@ -9,7 +9,7 @@ import { createRelayServer } from '../server.js';
 import { LIMITS } from '../rooms.js';
 
 const ROOM = 'k7q3m2xw9aZ4';
-const SITE = 'https://thunderbird.cafe';
+const SITE = 'https://raku.lexicographer.space';   // where rooms live (the lab page on thunderbird.cafe retired Oct 29 2026)
 const quiet = { log: () => {} };
 
 // The pages fly.toml lets in (what the live relay runs with).
@@ -73,16 +73,14 @@ test('health and a plain page for the address; other paths not found', async () 
   await r.close();
 });
 
-test('pages from the allowed sites (fly.toml: thunderbird.cafe, the site\'s dev server, Raku and Raku on this computer) get in; other sites, Daisy-only origins and other paths are turned away', async () => {
+test('pages from the allowed sites (fly.toml: Raku and Raku on this computer) get in; the retired lab page, other sites, Daisy-only origins and other paths are turned away', async () => {
   const { r, url } = await start();
   const ok = await page(url);
   assert.ok(ok.ws);
-  const local = await page(url, { origin: 'http://127.0.0.1:4321' });
-  assert.ok(local.ws);
-  const raku = await page(url, { origin: 'https://raku.lexicographer.space' });   // 0.11.0: rooms in Raku
-  assert.ok(raku.ws);
   const rakuDev = await page(url, { origin: 'http://127.0.0.1:5180' }), rakuPreview = await page(url, { origin: 'http://127.0.0.1:5181' });
   assert.ok(rakuDev.ws); assert.ok(rakuPreview.ws);
+  assert.equal((await page(url, { origin: 'https://thunderbird.cafe' })).refused, 403, 'the lab page retired Oct 29 2026');
+  assert.equal((await page(url, { origin: 'http://127.0.0.1:4321' })).refused, 403, 'so did its dev server');
   assert.equal((await page(url, { origin: 'https://www.raku.lexicographer.space' })).refused, 403);
   assert.equal((await page(url, { origin: 'https://lexicographer.space' })).refused, 403);
   assert.equal((await page(url, { origin: 'https://www.thunderbird.cafe' })).refused, 403);
@@ -90,7 +88,7 @@ test('pages from the allowed sites (fly.toml: thunderbird.cafe, the site\'s dev 
   assert.equal((await page(url, { origin: 'http://localhost:4321' })).refused, 403);
   assert.equal((await page(url, { origin: 'http://localhost:5180' })).refused, 403);
   assert.equal((await page(url.replace(/\/$/, '/lounge'))).refused, 404);
-  ok.ws.close(); local.ws.close(); raku.ws.close(); rakuDev.ws.close(); rakuPreview.ws.close();
+  ok.ws.close(); rakuDev.ws.close(); rakuPreview.ws.close();
   await r.close();
 });
 
@@ -264,7 +262,7 @@ test('the Fly files: the app name, one region, sleeps when idle and wakes on a c
   assert.match(toml, /^\s*min_machines_running = 0$/m);                  // sleeps when idle (R4)
   assert.match(toml, /type = 'connections'/);
   assert.match(toml, /path = '\/health'/);
-  assert.match(toml, /ALLOWED_ORIGINS = 'https:\/\/thunderbird\.cafe,http:\/\/127\.0\.0\.1:4321,https:\/\/raku\.lexicographer\.space,http:\/\/127\.0\.0\.1:5180,http:\/\/127\.0\.0\.1:5181'$/m);
+  assert.match(toml, /ALLOWED_ORIGINS = 'https:\/\/raku\.lexicographer\.space,http:\/\/127\.0\.0\.1:5180,http:\/\/127\.0\.0\.1:5181'$/m);
   assert.match(toml, /fly deploy --ha=false/);
   assert.match(toml, /relay\.rooms\.thunderbird\.cafe/);
   const docker = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8');

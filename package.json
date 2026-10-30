@@ -1,7 +1,7 @@
 {
   "name": "rooms-lab",
-  "version": "0.11.0",
-  "description": "The Rooms lab: small live rooms for tile demos among friends (thunderbird.cafe's lab page, and Raku's room tab)",
+  "version": "0.11.1",
+  "description": "The rooms behind Raku's room tab (small live rooms for tile demos among friends), with their relay and a dev page; the thunderbird.cafe lab page retired Oct 29 2026",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",

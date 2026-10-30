@@ -1,10 +1,11 @@
 # Rooms lab
 
-A proof of concept for **rooms**: small live rooms for tile demos among friends. Voice, one shared screen at a
-time, a house tile that holds the room's rules, and tiles opened for everyone. The lab page will live at
-https://thunderbird.cafe/webtiles/rooms-lab/ (a hidden page). Rooms may move into
-[Raku](https://raku.lexicographer.space/) later, so the page code here is plain JavaScript modules with no
-framework, which Raku can import as they are.
+**Rooms**: small live rooms for tile demos among friends. Voice, one shared screen at a time, a house tile that
+holds the room's rules, and tiles opened for everyone. **Rooms live in [Raku](https://raku.lexicographer.space/)**
+(a tab, since Oct 29 2026), which takes this folder as a package pinned to a GitHub tag (see 11). The lab page that
+started here (https://thunderbird.cafe/webtiles/rooms-lab/) retired on Oct 29 2026: it now says "Rooms have moved to
+Raku". This folder keeps the room's code, the relay, the house and poll tiles, and a dev page for building and
+checks (`npm run dev`).
 
 ## Where it's at
 
@@ -30,7 +31,7 @@ framework, which Raku can import as they are.
    Allow or Deny from the preview. What's sent is the version previewed (a request carries its CID, and the
    host's page refuses a newer one), and the preview becomes your card in place: the same frame, still
    running, so nothing loads twice and what you did in it stays.
-5. **Live** (`site/`, `scripts/copy-to-site.mjs`): the page on thunderbird.cafe, a hidden page at
+5. **Live** (retired Oct 29 2026, with `site/` and `scripts/copy-to-site.mjs`): the page on thunderbird.cafe, a hidden page at
    https://thunderbird.cafe/webtiles/rooms-lab/, with the published house tile pinned and the relay on
    Fly.io. The steps are below ("Going live").
 6. **Live tiles** (`src/live.js`, `tiles/poll/`): a tile opened for everyone can be **shared live with the
@@ -93,9 +94,15 @@ framework, which Raku can import as they are.
    never reads or rewrites the page's own address (Raku keeps its tabs there). `keepHostKey` / `keptHostKey`,
    `whoLabel` and `NAME_KEY` are exported for that join screen. The relay lets in Raku
    (`https://raku.lexicographer.space`, and `http://127.0.0.1:5180` / `:5181` for Raku's `npm run dev` / `npm run
-   preview`). The lab page and Raku can share a room (same relay); the lab page retires once Raku's room passes the
-   two-computer test (`claude/raku-rooms-plan.md`, RR3). Releasing a version for Raku: commit, then
-   `git tag v0.11.0` and `git push origin v0.11.0`; in Raku, change the tag in `package.json` and `npm install`.
+   preview`). The lab page and Raku shared rooms until Raku's room passed the two-computer test (Oct 29 2026,
+   `claude/raku-rooms-plan.md`, RR3); then the lab page retired (12). Releasing a version for Raku: commit, then
+   `git tag v0.11.1` (the new version) and `git push origin v0.11.1`; in Raku, change the tag in `package.json` and
+   `npm install`.
+12. **The lab page retired** (version 0.11.1, Oct 29 2026; `claude/raku-rooms-plan.md`, RR11 to RR14): the site's page
+   at /webtiles/rooms-lab/ now only says "Rooms have moved to Raku" (the site's own page, no room code); `site/`,
+   `scripts/copy-to-site.mjs` and the site checks are gone; the relay lets in only Raku (and Raku on this computer).
+   The host's house line is plainer: "House rules: when a guest asks for something, you decide." (the rule set's
+   own name stays in the room's log).
 
 ## Try it on this computer
 
@@ -137,7 +144,7 @@ npm run dev
 and add `&turn=only` to one window's room link: its people should show "via relay". (Close the window
 afterwards: the key lives only in it.)
 
-## Going live (build step 5)
+## Going live (build step 5; the lab page retired Oct 29 2026, kept here as it was)
 
 In this order (as with the site's tables: **publish and pin before pushing**). Make an app password for
 thunderbird.cafe first, and delete it after step 2.
@@ -160,9 +167,9 @@ thunderbird.cafe first, and delete it after step 2.
    https://thunderbird.cafe/webtiles/rooms-lab/.
 7. **The two-computer test** (plan section 1, "Done when").
 
-After changing the page here: run `copy-to-site.mjs` again and push the site. After changing the house:
-`node scripts/publish.mjs --again`, then `copy-to-site.mjs`, then push (the live page loads only the pinned
-version; delete the old house record in PDSls once the new page is live).
+**Since the page retired:** after changing the room's code here, release a new tag for Raku (11). After changing
+the house: `node scripts/publish.mjs --again`, then a new tag, and in Raku the new pin (`ROOMS.house`) with the new
+tag (Raku's `test/rooms.test.mjs` checks they agree); delete the old house record in PDSls once Raku is live.
 
 ## TURN (build step 7)
 
@@ -214,8 +221,8 @@ Decided in `claude/rooms-signin-plan.md` (the Foundry project); the join screen 
   signing in again as it (another device, no host key) makes you the host again. The host key still works.
 - **One live connection per account:** joining signed in as an account already in the room replaces the
   older tab, which says "You joined this room from another tab or device." with **Join here instead**.
-- **The sign-in client:** the live page's own description, `site\oauth.json` (copied to the site's
-  `public\webtiles\rooms-lab\oauth.json`); on 127.0.0.1 a loopback sign-in. Every sign-in on
+- **The sign-in client:** the lab page's own description was `site\oauth.json` (removed when the page retired; in
+  Raku the room uses Raku's own sign-in); on 127.0.0.1 the dev page uses a loopback sign-in. Every sign-in on
   thunderbird.cafe shares the library's store, filed by account only, and a new sign-in cancels that
   account's other sign-in on the site: so signing in here replaces that account's Daisy or Seven-Up
   sign-in in the same browser (and the reverse). The other page still looks signed in (it borrows this
@@ -331,19 +338,13 @@ and nothing is kept: when the room ends, they're gone.
   outside `src/` is imported by the room page, the hosting options are there.
 - `dev/`: the dev page, `serve.mjs` (`npm run dev`), `tile-host.js` (the tile loader, for the dev page) and
   `signin-lib.js` (the sign-in library, for the dev page).
-- `site/`: what only the site's page has: `main.js` (the site's tile loader for the house and for tiles;
-  the house pinned and checked; sign-in), `page-csp.js` (the page's security policy), `index.astro` (the
-  page) and `oauth.json` (the page's sign-in description).
-  `scripts/copy-to-site.mjs` copies them with the page modules into the site.
 - `test/`: `npm test` (the page's pieces, its relay connection against the real relay, the house's
   rules, the bridge, publishing to a stand-in server, reading tile records, the hide list). The browser
   check, `test/browser/check_room.mjs`, runs three Chromium pages with a fake mic and screen (and stand-ins
   for the tiles' servers, with the real servers' CORS headers); it needs
-  Playwright, which this folder doesn't install (it runs in the chat sandbox). `test/browser/check_site.mjs`
-  checks the page the site's way: the house published (to a stand-in server) and pinned by
-  `copy-to-site.mjs`, the site's entry point bundled with the real tile loader, the page's security policy,
-  and the house and a tile running through a replica of the tile loading server (`test/loader-replica.mjs`),
-  including the live poll shared live through the real loader. `test/browser/check_live.mjs` runs live
+  Playwright, which this folder doesn't install (it runs in the chat sandbox). (The site page's check,
+  `check_site.mjs`, retired with the page; Raku's `test/browser/check_room.py` runs the room through Raku's real
+  tile loader.) `test/browser/check_live.mjs` runs live
   tiles across four pages on the dev page (the real poll, every page's relay messages recorded).
   `test/browser/check_turn.mjs` runs TURN with a stand-in for Cloudflare's credentials API and a tiny real
   TURN server (`test/browser/turn-standin.mjs`, for the checks only), so Chromium really sends media through

@@ -192,7 +192,8 @@ try {
   step('Nick makes a room: his page holds the house, sealed (scripts only, no origin of its own), and it says it\'s ready');
   await join(nick, PAGE, 'New room');
   await until(nick, () => document.querySelector('.rl-house-line').dataset.house === 'ready');
-  assert.match(await nick.page.locator('.rl-house-line').textContent(), /House: the room’s rules \(host-approves\)/);
+  assert.equal(await nick.page.locator('.rl-house-line').textContent(), 'House rules: when a guest asks for something, you decide.');   // 0.11.1 (RR14)
+  assert.ok(await room(nick, () => window.__roomsLab.room.log.some((l) => /the house is ready \(rules: host-approves\)/.test(l))), 'the rule set\u2019s own name stays in the log');
   assert.equal(await nick.page.locator('.rl-house iframe').getAttribute('sandbox'), 'allow-scripts');
   const invite = await nick.page.inputValue('.rl-invite');
   assert.match(invite, /#r=[a-z2-9]{12}$/);
@@ -638,7 +639,7 @@ try {
   const host2 = await person('Ana'), guest2 = await person('Ben');
   const guest3 = await person('Cal', { tiles: false });
   await join(host2, `${PAGE}&house=off`, 'New room');
-  assert.equal(await host2.page.locator('.rl-house-line').textContent(), 'No house tile: you approve each request yourself.');
+  assert.equal(await host2.page.locator('.rl-house-line').textContent(), 'The house rules couldn\u2019t load, so you decide every request yourself.');
   assert.equal(await host2.page.locator('.rl-house iframe').count(), 0);
   await join(guest2, await host2.page.inputValue('.rl-invite'), 'Join room');
   await until(host2, () => document.querySelectorAll('.rl-person').length === 2);

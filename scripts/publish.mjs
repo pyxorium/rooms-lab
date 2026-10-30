@@ -132,7 +132,7 @@ export async function runPublish({ fetchImpl = fetch, ask, askHidden, log = cons
     writePublished(out);
     log(`  done: ${r.uri}`);
   }
-  log(`\nPublished, and read back to check.${todo.some((t) => t.id === 'house') ? ' Next: copy-to-site.mjs pins the house in the site.' : ''}`);
+  log(`\nPublished, and read back to check.${todo.some((t) => t.id === 'house') ? ' Next: pin the new house in Raku (ROOMS.house in C:\\thunderbird-cafe\\raku\\src\\config.js) with a new rooms-lab tag.' : ''}`);
   if (lexiconsDue.length) log(`The Wix TXT record _lexicon.rooms (value did=${ACCOUNT}) must be in place for sign-in servers to find the permission set.`);
   log('Delete this app password (Bluesky: Settings > Privacy and security > App passwords).');
   return { changed: true, published: out };

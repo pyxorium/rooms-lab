@@ -44,9 +44,9 @@ test('room links: an invite carries only the room; the host link adds the key; ?
   assert.equal(page.readRoomHash('#r=abcdefghjkmn&turn=yes').turnOnly, false);
 });
 
-test('which relay: the real one on the live page and the site\'s dev server; the local one on the lab\'s dev page; ?relay= only on this computer', () => {
+test('which relay (when the host page names none): the real one away from this computer; the dev page\'s local one here; ?relay= only on this computer', () => {
   assert.equal(relayUrl(new URL('https://thunderbird.cafe/webtiles/rooms-lab/?relay=ws://x/')), RELAY_URL);
-  assert.equal(relayUrl(new URL('http://127.0.0.1:4321/webtiles/rooms-lab/')), RELAY_URL);
+  assert.equal(relayUrl(new URL('http://127.0.0.1:4321/webtiles/rooms-lab/')), LOCAL_RELAY_URL, 'the site\u2019s dev server is no longer special (the lab page retired Oct 29 2026)');
   assert.equal(relayUrl(new URL('http://127.0.0.1:5190/')), LOCAL_RELAY_URL);
   assert.equal(relayUrl(new URL('http://127.0.0.1:5190/?relay=ws://127.0.0.1:9/')), 'ws://127.0.0.1:9/');
   assert.equal(relayUrl(new URL('http://127.0.0.1:5190/?relay=javascript:alert(1)')), LOCAL_RELAY_URL);

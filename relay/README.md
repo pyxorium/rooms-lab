@@ -1,7 +1,7 @@
 # Rooms lab relay
 
-The relay for the **Rooms lab**, the proof of concept at https://thunderbird.cafe/webtiles/rooms-lab/ (a
-hidden page): small live rooms where friends talk, one person shares a screen, and a tile is opened for
+The relay for **rooms** (since Oct 29 2026 a tab in Raku, https://raku.lexicographer.space/; they started as the Rooms lab, a proof of concept at https://thunderbird.cafe/webtiles/rooms-lab/, now retired):
+small live rooms where friends talk, one person shares a screen, and a tile is opened for
 everyone. The plan is `claude/rooms-lab-plan.md` in the project (build order step 1). It runs on Fly.io as its own small app, `thunderbird-rooms-relay`, at
 **`wss://relay.rooms.thunderbird.cafe/`**, modelled on Daisy's relay (`C:\thunderbird-cafe\daisy-relay`),
 which stays untouched.
@@ -141,15 +141,15 @@ In `C:\thunderbird-cafe\rooms-lab\relay`:
 npm start
 ```
 
-It listens on `ws://127.0.0.1:8080/` (pages allowed from `https://thunderbird.cafe` only, unless you set
-`ALLOWED_ORIGINS`, e.g. `$env:ALLOWED_ORIGINS = "http://127.0.0.1:4321"` first).
+It listens on `ws://127.0.0.1:8080/` (pages allowed from `https://raku.lexicographer.space` only, unless you set
+`ALLOWED_ORIGINS`, e.g. `$env:ALLOWED_ORIGINS = "http://127.0.0.1:5180"` first).
 
 ## Settings
 
 | Env var | Default | Meaning |
 |---|---|---|
 | `PORT` | 8080 | Listen port |
-| `ALLOWED_ORIGINS` | `https://thunderbird.cafe` | Pages allowed to connect, comma-separated (`*` for any). In `fly.toml`: thunderbird.cafe, `http://127.0.0.1:4321` (the site's dev server) and, since 0.11.0, Raku (`https://raku.lexicographer.space`, and `http://127.0.0.1:5180` / `:5181` for Raku's `npm run dev` / `npm run preview`). A client that isn't a browser sends no origin and is let in: the check is a courtesy, not a lock. |
+| `ALLOWED_ORIGINS` | `https://raku.lexicographer.space` | Pages allowed to connect, comma-separated (`*` for any). In `fly.toml`: Raku (`https://raku.lexicographer.space`, and `http://127.0.0.1:5180` / `:5181` for Raku's `npm run dev` / `npm run preview`). The lab page on thunderbird.cafe and the site's dev server were let in until the lab page retired (Oct 29 2026). A client that isn't a browser sends no origin and is let in: the check is a courtesy, not a lock. |
 | `MAX_CONNECTIONS` | 300 | Connections in all |
 | `MAX_PER_IP` | 20 | Connections per address (Fly's `fly-client-ip` header) |
 | `TURN_KEY_ID` | (none) | Cloudflare TURN key id. **A Fly secret**, never in `fly.toml` |
