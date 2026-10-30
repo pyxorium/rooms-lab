@@ -68,6 +68,15 @@
 // frame reloads and the call carries on. The stage changing keeps you expanded (RR17); an empty stage folds back.
 // Escape folds back (in real full screen it leaves full screen first). `onExpand(on)` lets the host page hide its
 // own rows meanwhile (Raku: the address row in the installed window, the top and bottom bars on a phone).
+//
+// The call away from the room (0.13.0; claude/raku-rooms-step4.md, RR23 to RR32; call.js, call-ui.js): the returned
+// `call` API (call.state, call.subscribe, and the actions: Mute, Leave or End room, Stop sharing, Allow / Deny, the
+// question "share your screen?", Pop out / Bring it back) lets a host page draw a call bar on its other tabs and a
+// marker on the room's tab (call-ui.js createCallBar, drawMarker). "Pop out" (the room's controls, the room bar, the
+// call bar; only where the browser can) opens the floating window, always on top (Document Picture-in-Picture): a
+// live screen when someone else shares one, compact otherwise. The first screen share in a call shows a one-time hint:
+// "Presenting from another program? Pop out the room to keep it on top." `onBackToRoom` lets the host page bring the
+// room's tab to the front (from the call bar or the floating window).
 import { connectRoom } from './room-link.js';
 import { createMesh } from './mesh.js';
 import { createLevels } from './levels.js';
@@ -86,6 +95,8 @@ import { whatsOnStage, afterPresenterChange, stageLines, EMPTY_LINE, EMPTY_HINT_
   EXPAND, BACK_TO_ROOM, canExpand, staysExpanded, hereCount, BAR_STATUS_MS, PHONE_WIDTH } from './stage.js';
 import { attachTypeahead } from './typeahead.js';
 import { createNewTileWatcher, offerWords, POLL_MS as NEW_TILE_POLL_MS, LIST_LIMIT as NEW_TILE_LIST } from './new-tiles.js';
+import { POP_OUT, BRING_BACK, POP_HINT, canPopOut, showHint } from './call.js';
+import { createFloat } from './call-ui.js';
 
 export const h = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -164,6 +175,10 @@ const DEFAULTS = {
   // when this page expands or folds back (the host page may hide its own rows meanwhile).
   expandArea: null,        // () → Element
   onExpand: null,          // (on: boolean)
+  // The call away from the room (0.13.0): bring the room's tab to the front (the call bar's and the floating window's
+  // "Back to the room"); null: this window comes to the front. canPopOut: can the floating window open here?
+  onBackToRoom: null,      // () => void
+  canPopOut: null,         // () → boolean (null: the browser's own answer, call.js canPopOut)
 };
 
 const get = (s, k) => { try { return s?.getItem(k) ?? null; } catch { return null; } };
@@ -411,6 +426,11 @@ export function mountRoomPage(root, options = {}) {
       over: false,
       expanded: false,             // 0.12.0: this person's own view (never sent, never kept)
       barStatus: null,             // a status line showing in the room bar, for a few seconds
+      joinedOnce: false,           // 0.13.0: in the room (the call bar shows from the first join until leaving)
+      hintSeen: false,             // RR26: the pop-out hint showed in this call (once per call)
+      hint: false,                 // …and is showing now
+      popUsed: false,              // the floating window was opened in this call (no hint after that)
+      notice: null,                // { text, at, reopen } for the call bar: your share stopped, say
     };
     const els = buildRoom(r);
     view.replaceChildren(els.section);
@@ -591,13 +611,20 @@ export function mountRoomPage(root, options = {}) {
     els.xMic = h('button', { type: 'button', class: 'rl-x-mic', 'aria-pressed': 'false', onclick: () => toggleMic() }, 'Unmute');
     els.xFull = h('button', { type: 'button', class: 'rl-x-full', hidden: true, onclick: () => barFull() }, 'Full screen');
     els.xBack = h('button', { type: 'button', class: 'rl-x-back', onclick: () => collapse() }, BACK_TO_ROOM);
+    els.xPop = h('button', { type: 'button', class: 'rl-x-pop', hidden: true, onclick: () => togglePop() }, POP_OUT);
     els.xbar = h('div', { class: 'rl-xbar', role: 'toolbar', 'aria-label': 'The room' },
       h('span', { class: 'rl-x-what' }, els.xBadge, els.xCaption, els.xStatus),
       h('span', { class: 'rl-x-people' }, els.xChips, els.xCount),
-      els.xMic, els.xFull, els.xBack);
+      els.xMic, els.xFull, els.xPop, els.xBack);
     els.mic = h('button', { type: 'button', class: 'rl-mic', 'aria-pressed': 'false', onclick: () => toggleMic() }, 'Unmute');
     // While "The host said you can present" is open, Share my screen does what its button does (the picker).
     els.share = h('button', { type: 'button', class: 'rl-share', onclick: () => (r.screenTrack ? stopShare('You stopped sharing.') : r.prompt?.type === 'go' ? startShare(r.prompt) : wish('present')) }, 'Share my screen');
+    // 0.13.0: the floating window (RR26), beside Mute; and the one-time hint when the first screen share starts.
+    els.pop = h('button', { type: 'button', class: 'rl-pop', hidden: true, onclick: () => togglePop() }, POP_OUT);
+    els.hint = h('p', { class: 'rl-pop-hint', role: 'status', hidden: true },
+      h('span', {}, POP_HINT),
+      h('button', { type: 'button', class: 'rl-primary rl-pop-hint-go', onclick: () => togglePop() }, POP_OUT),
+      h('button', { type: 'button', class: 'rl-pop-hint-x', 'aria-label': 'Hide this hint', title: 'Hide this hint', onclick: () => { r.hint = false; renderControls(); } }, '\u00d7'));
     els.houseLine = h('p', { class: 'rl-house-line', hidden: true });
     els.houseMount = h('div', { class: 'rl-house', hidden: true });
     els.approvals = h('div', { class: 'rl-approvals' });
@@ -619,7 +646,8 @@ export function mountRoomPage(root, options = {}) {
       els.approvals,
       els.stage,
       els.xbar,
-      h('div', { class: 'rl-controls' }, els.mic, els.share),
+      h('div', { class: 'rl-controls' }, els.mic, els.share, els.pop),
+      els.hint,
       els.prompt,
       h('section', { class: 'rl-tiles' },
         h('h2', {}, 'Tiles opened for everyone'),
@@ -666,7 +694,7 @@ export function mountRoomPage(root, options = {}) {
     if (state === 'joined') {
       const before = get(o.session, meKey(r.code));
       put(o.session, meKey(r.code), d.peer);
-      r.host = d.host; r.me = d.peer;
+      r.host = d.host; r.me = d.peer; r.joinedOnce = true;
       if (d.host && d.hostKey) put(o.session, hostKeyKey(r.code), d.hostKey);
       if (r.screenTrack) r.link.all({ kind: 'presenting', on: true });      // back after a drop: still presenting
       if (d.host) startHouse(); else stopHouse();
@@ -970,12 +998,13 @@ export function mountRoomPage(root, options = {}) {
       ] });
       r.strip.noteOn(w.uri, `${nameOf(from)} asks to open this for everyone.`);
     };
-    r.approvals.set(key, { from, w, el, timer: setTimeout(() => {
+    r.approvals.set(key, { from, w, el, text, allow, deny, timer: setTimeout(() => {
       if (!r.approvals.has(key)) return;
       closeApproval(key); r.hostWishes.delete(from); result(from, w.id, 'deny', 'The host didn\u2019t answer.');
     }, w.wish === 'open-tile' ? tileAskMs() : o.times.askTimeoutMs) });
     r.els.approvals.append(el);
     say(text);
+    emitCall();
   }
 
   function closeApproval(key, { keepPreview = false } = {}) {
@@ -986,6 +1015,7 @@ export function mountRoomPage(root, options = {}) {
     if (a.previewing && !keepPreview) r.strip.removePreview(a.w.uri);
     a.el.remove();
     r.approvals.delete(key);
+    emitCall();
   }
 
   // Allowed: the request goes on to the person it's about. Nothing is shared until they click.
@@ -1382,6 +1412,7 @@ export function mountRoomPage(root, options = {}) {
     const hp = hostPeer();
     const q = pr.type === 'ask' ? `${nameOf(pr.from)} asks to see your screen. Share with ${shareWith}?` : `The host said you can present. Share with ${shareWith}?`;
     const allowed = pr.type === 'ask' && hp && pr.from !== hp.peer && !r.host ? ' The host allowed this request; you decide.' : '';
+    r.prompt.q = q;
     const p = r.els.prompt;
     p.replaceChildren(
       h('p', { class: 'rl-prompt-q' }, q),
@@ -1448,6 +1479,7 @@ export function mountRoomPage(root, options = {}) {
     if (r.presenter === r.me) r.presenter = null;
     if (tell && !r.over) { r.link.all({ kind: 'presenting', on: false }); note('→', null, 'presenting off'); }
     if (why) say(why);
+    if (why && !r.over) r.notice = { text: why, at: Date.now(), reopen: true };   // the call bar opens to say so (RR24)
     render();
   }
 
@@ -1534,7 +1566,18 @@ export function mountRoomPage(root, options = {}) {
     r.els.tileButton.disabled = !r.link?.joined;
     r.strip?.refresh();
     leaveBtn.hidden = r.host;
+    // 0.13.0: Pop out (or Bring it back) where the browser can; the one-time hint when the first screen share starts.
+    const canPop = popPossible();
+    const popped = !!float?.isOpen;
+    if (r.presenter && !r.hintSeen) {
+      r.hintSeen = true;
+      if (showHint({ canPop, seen: false, popped, used: r.popUsed })) { r.hint = true; if (r.expanded) barSay(POP_HINT); }
+    }
+    if (popped || r.popUsed) r.hint = false;
+    for (const b of [r.els.pop, r.els.xPop]) { b.hidden = !canPop; b.textContent = popped ? BRING_BACK : POP_OUT; }
+    r.els.hint.hidden = !r.hint;
     renderBar();
+    emitCall();
   }
 
   function renderStage() {
@@ -1650,6 +1693,7 @@ export function mountRoomPage(root, options = {}) {
     if (!r) return;
     if (r.expanded) collapse();       // the host page gets its rows back first
     r.over = true;
+    float?.close();
     r.placer?.disconnect();
     r.areaWatch?.disconnect();
     globalThis.document?.removeEventListener('keydown', r.onKey);
@@ -1684,7 +1728,79 @@ export function mountRoomPage(root, options = {}) {
           start();
         } }, 'Back to the start'))));
     try { o.onOver?.({ code: r.code, why, again, reason }); } catch (err) { console.error('[rooms-lab] onOver', err); }
+    emitCall();
   }
+
+  // ---- The call away from the room (0.13.0; call.js, call-ui.js; RR23 to RR32) ----
+  const callListeners = new Set();
+  let callQueued = false;
+  function emitCall() {
+    if (callQueued || !callListeners.size) return;
+    callQueued = true;
+    queueMicrotask(() => {
+      callQueued = false;
+      const s = callState();
+      for (const fn of [...callListeners]) { try { fn(s); } catch (err) { console.error('[rooms-lab] call listener', err); } }
+    });
+  }
+  const popPossible = () => (o.canPopOut ? !!o.canPopOut() : canPopOut(globalThis));
+  // What the call bar, the marker and the floating window show. Never sent anywhere.
+  function callState() {
+    const r = room;
+    if (!r || r.over || !r.joinedOnce) return { joined: false };
+    const { stage, stageBadge, caption } = r.els;
+    const what = stage.dataset.on || 'empty';
+    const mine = r.presenter === r.me;
+    return {
+      joined: true, code: r.code, host: !!r.host,
+      micOn: !!r.micTrack && !r.muted,
+      talking: r.talking.size > 0,
+      people: [...r.people.values()].map((p) => ({ peer: p.peer, name: shown(p), me: p.peer === r.me, host: !!p.host, away: !!p.away, talking: r.talking.has(p.peer) })),
+      stage: { what, badge: stageBadge.hidden ? null : stageBadge.textContent, caption: caption.textContent, name: r.stageTile ? r.strip.name(r.stageTile) : null },
+      screen: what === 'screen' && !mine ? r.remote.get(r.presenter)?.screen || null : null,
+      sharing: !!r.screenTrack,
+      approvals: [...r.approvals.entries()].map(([key, a]) => ({ key, text: a.text })),
+      prompt: r.prompt ? { id: r.prompt.id, type: r.prompt.type, text: r.prompt.q || '' } : null,
+      notice: r.notice,
+      hint: !!r.hint,
+      popped: !!float?.isOpen,
+      canPopOut: popPossible(),
+    };
+  }
+  let float = null;
+  function backToRoom() {
+    float?.close();
+    if (o.onBackToRoom) { try { o.onBackToRoom(); } catch (err) { console.error('[rooms-lab] onBackToRoom', err); } }
+    try { globalThis.focus?.(); } catch { /* fine */ }
+  }
+  // Pop out (from a click: the browser opens the floating window only then), or bring it back.
+  async function togglePop() {
+    const r = room;
+    if (!r || r.over) return;
+    if (float?.isOpen) { float.close(); return; }
+    if (!popPossible()) return;
+    float ||= createFloat({ call: callApi, h, onBack: () => backToRoom(), onClosed: () => { const x = room; if (x) renderControls(); emitCall(); } });
+    r.popUsed = true; r.hint = false;
+    try { await float.open(); } catch (err) { say('The room couldn\u2019t open in its own window.'); console.warn('[rooms-lab] pop out', err); }
+    if (room === r) renderControls();
+  }
+  const withRoom = (fn) => (...a) => { const r = room; if (r && !r.over) return fn(r, ...a); return undefined; };
+  const callApi = {
+    get state() { return callState(); },
+    subscribe(fn) { callListeners.add(fn); emitCall(); return () => callListeners.delete(fn); },
+    toggleMic: withRoom(() => toggleMic()),
+    // Leave (a guest), End room (the host, as the room's own button): the call bar and the floating window ask first.
+    leave: withRoom((r) => { if (r.host) r.link.end(); else leave('You left the room.'); }),
+    stopShare: withRoom(() => stopShare('You stopped sharing.')),
+    allow: withRoom((r, key) => r.approvals.get(key)?.allow()),
+    deny: withRoom((r, key) => r.approvals.get(key)?.deny()),
+    share: withRoom((r) => { if (r.prompt) startShare(r.prompt); }),
+    notNow: withRoom((r) => { if (!r.prompt) return; if (r.prompt.type === 'ask') answer(r.prompt.from, r.prompt.id, 'no'); closePrompt(); }),
+    popOut: withRoom(() => { if (!float?.isOpen) return togglePop(); return undefined; }),
+    popIn: () => float?.close(),
+    back: () => backToRoom(),
+    hideHint: withRoom((r) => { r.hint = false; renderControls(); }),
+  };
 
   start();
   return {
@@ -1693,5 +1809,7 @@ export function mountRoomPage(root, options = {}) {
     // What the house is told about the room right now (the host's page): for the checks.
     get houseState() { return room ? houseState() : null; },
     leave: () => leave('You left the room.'),
+    // 0.13.0: the call away from the room (call.js, call-ui.js).
+    call: callApi,
   };
 }

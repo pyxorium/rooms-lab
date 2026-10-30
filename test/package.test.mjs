@@ -16,16 +16,18 @@ test('every exported file exists and is in the files npm packs; the room page, i
     assert.ok(existsSync(new URL(`../${path}`, import.meta.url)), `${name} → ${target} exists`);
     assert.ok(inFiles(path), `${target} is in "files"`);
   }
-  for (const name of ['./room-page.js', './room.css', './formats.js', './config.js', './published.json']) assert.ok(pkg.exports[name], name);
+  for (const name of ['./room-page.js', './room.css', './formats.js', './config.js', './published.json', './call.js', './call-ui.js']) assert.ok(pkg.exports[name], name);
   // The relay, the tiles, the scripts and the tests stay out of what Raku downloads.
   for (const path of ['relay/server.js', 'tiles/house/index.html', 'scripts/publish.mjs', 'test/package.test.mjs', 'site/main.js']) assert.ok(!inFiles(path), path);
 });
 
-test('the room page imports nothing outside src/ (so the packed copy runs as it is)', () => {
-  const src = readFileSync(new URL('../src/room-page.js', import.meta.url), 'utf8');
-  const imports = [...src.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
-  assert.ok(imports.length > 5);
-  for (const i of imports) assert.match(i, /^\.\/[a-z-]+\.js$/, i);
+test('the room page (and the call bar, 0.13.0) import nothing outside src/ (so the packed copy runs as it is)', () => {
+  for (const file of ['room-page.js', 'call-ui.js', 'call.js']) {
+    const src = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
+    const imports = [...src.matchAll(/^import [\s\S]*? from '([^']+)';$/gm)].map((m) => m[1]);
+    if (file === 'room-page.js') assert.ok(imports.length > 5);
+    for (const i of imports) assert.match(i, /^\.\/[a-z-]+\.js$/, `${file}: ${i}`);
+  }
 });
 
 test('the hosting hooks are there (Raku): its own join screen, links, no lab chrome, joined / people / over', async () => {
@@ -40,7 +42,7 @@ test('the hosting hooks are there (Raku): its own join screen, links, no lab chr
   page.keepHostKey(session, 'abcdefghijkm', null);
   assert.equal(page.keptHostKey(session, 'abcdefghijkm'), null);
   const src = readFileSync(new URL('../src/room-page.js', import.meta.url), 'utf8');
-  for (const hook of ['joinScreen', 'links', 'chrome', 'turnOnly', 'onJoined', 'onPeople', 'onOver', 'expandArea', 'onExpand']) assert.match(src, new RegExp(`\\b${hook}:`), hook);
+  for (const hook of ['joinScreen', 'links', 'chrome', 'turnOnly', 'onJoined', 'onPeople', 'onOver', 'expandArea', 'onExpand', 'onBackToRoom', 'canPopOut']) assert.match(src, new RegExp(`\\b${hook}:`), hook);
   // A host page's address is never read or rewritten by the room.
   assert.match(src, /const ownAddress = !o\.links && !o\.joinScreen;/);
   assert.match(src, /if \(ownAddress\) \{ try \{ o\.history\?\.replaceState/);

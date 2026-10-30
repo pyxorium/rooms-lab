@@ -114,6 +114,21 @@ checks (`npm run dev`).
    you hid) folds you back. Escape folds back (in real full screen, Escape leaves full screen first). Not kept
    across a reload. Where there's no real full screen (iPhones), Expand is the one button: "fill the window" is
    gone. `onExpand(on)` tells the host page, which may hide its own rows meanwhile (Raku does).
+14. **The call away from the room** (version 0.13.0, Oct 2026; `claude/raku-rooms-step4.md`, RR23 to RR32): the room
+   returns a `call` API (`call.state`, `call.subscribe(fn)`, and Mute, Leave or End room, Stop sharing, Allow / Deny,
+   "Choose what to share…" / Not now, Pop out / Bring it back), and `src/call-ui.js` draws from it: **the call bar**
+   for a host page's other tabs (`createCallBar`: what's on, or what needs you; the people; Mute; Pop out; Back to the
+   room; Leave asking in place, "Leave? Yes · No" for four seconds, End room for the host; a fold button, and it
+   opens again by itself when something new needs you; on a phone the count, Mute, Back to the room and "⋯" with
+   Fold and Leave, folding into a round chip), **the marker** for the room's tab (`drawMarker`: a mic, a ring while
+   anyone talks, crossed while you're muted, a dot when something needs you), and **the floating window**: "Pop
+   out" (in the room beside Mute, in the room bar, in the call bar; only where the browser has Document
+   Picture-in-Picture: Chrome and Edge on computers) opens a small window that stays on top of every program: someone
+   else's screen as a picture with a thin strip (the count, Mute, Back to the room, Leave), compact otherwise (the
+   people, what's on or what needs you, the buttons). While it's open the call bar is one line, "The room is in its
+   own window · Bring it back". The first screen share in a call shows a one-time hint in the room: "Presenting from
+   another program? Pop out the room to keep it on top." `onBackToRoom` lets the host page bring the room's tab to the
+   front (Raku does). On the dev page the room's own Pop out works; the call bar is for a host page with tabs.
 
 ## Try it on this computer
 
@@ -344,6 +359,9 @@ and nothing is kept: when the room ends, they're gone.
 - `src/messages.js`: what the pages say to each other, checked on arrival.
 - `src/formats.js`, `src/config.js`: room codes, links (and the `&turn=only` switch), the relay address,
   STUN servers, timings.
+- `src/call.js`, `src/call-ui.js`: the call away from the room (0.13.0): the rules and words (when the folded bar
+  opens again, what the marker shows, the floating window's two layouts, the hint), and the call bar, the marker and
+  the floating window drawn from the room's `call` API.
 - `src/room.css`: the look (Raku's palette), scoped to `.rl`.
 - `test/package.test.mjs`: the package Raku takes (0.11.0): every exported file exists and is packed, nothing
   outside `src/` is imported by the room page, the hosting options are there.
@@ -365,7 +383,10 @@ and nothing is kept: when the room ends, they're gone.
   (`test/browser/signin-standin.js`), the lobby against the approved mockup, the host by account, one
   connection per account, the Daisy warning, the handle suggestions, and no DID ever reaching a page. It
   needs Bluesky's packages (`npm install` in `relay\`). `test/browser/check_expand.mjs` runs Expand (0.12.0: the room bar, following the stage, the host's floating
-  request, Full screen from the bar and back, Escape, folding back when the stage empties). `test/browser/check_stage.mjs` runs the stage (step
+  request, Full screen from the bar and back, Escape, folding back when the stage empties). `test/browser/check_call.mjs` runs
+  the call away from the room (0.13.0: the call bar mounted as a host page would, folding and opening again, Allow and
+  "Choose what to share…" from the bar, Leave asking in place, the one-time hint, the floating window's picture and
+  compact layouts, a question and End room in it, Bring it back, a phone's bar and chip, a browser without the window). `test/browser/check_stage.mjs` runs the stage (step
   9): tiles on and off it on three pages, the badges, the box keeping its size, full screen, a screen taking
   the stage back, a newcomer and a host reload, a forged "stage" message, phone width.
 

@@ -1,6 +1,6 @@
 {
   "name": "rooms-lab",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "The rooms behind Raku's room tab (small live rooms for tile demos among friends), with their relay and a dev page; the thunderbird.cafe lab page retired Oct 29 2026",
   "private": true,
   "license": "UNLICENSED",
@@ -11,6 +11,8 @@
     "./formats.js": "./src/formats.js",
     "./config.js": "./src/config.js",
     "./tile-records.js": "./src/tile-records.js",
+    "./call.js": "./src/call.js",
+    "./call-ui.js": "./src/call-ui.js",
     "./published.json": "./published.json",
     "./package.json": "./package.json"
   },

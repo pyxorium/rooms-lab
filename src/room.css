@@ -227,3 +227,85 @@
   .rl-x-count { padding: 2px 7px; }
   .rl-expanded .rl-xbar { padding: 0 6px calc(env(safe-area-inset-bottom, 0px)); height: calc(44px + env(safe-area-inset-bottom, 0px)); }
 }
+
+/* 0.13.0: the call away from the room (claude/raku-rooms-step4.md, RR23 to RR32; call-ui.js). */
+.rl-pop-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 0; padding: 8px 12px;
+  background: var(--rl-panel); border: 1px solid var(--rl-glaze); border-radius: 10px; font-size: 14px; }
+.rl-pop-hint > span { flex: 1 1 16em; }
+.rl .rl-pop-hint button { min-height: 30px; padding: 2px 10px; font-size: 13px; }
+.rl .rl-pop-hint .rl-pop-hint-x { background: none; border-color: transparent; color: var(--rl-muted); }
+.rl .rl-xbar .rl-x-pop { border-color: var(--rl-line); }
+
+/* The marker (RR28, RR32): a mic, a ring while anyone talks, crossed while you're muted, a dot when something needs
+   you. It sits in a host page's tab (outside .rl), so its colours carry their own fallbacks. */
+.rl-marker { position: relative; display: inline-grid; place-items: center; width: 18px; height: 18px; flex: none;
+  border-radius: 50%; color: var(--rl-muted, #b9ad9c); }
+.rl-marker svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.rl-marker .rl-mk-body { fill: currentColor; stroke: none; }
+.rl-marker[data-mic="on"] { color: var(--rl-glaze, #3fb8a8); }
+.rl-marker .rl-mk-cross { stroke: var(--rl-danger, #e08a7a); stroke-width: 1.8; }
+.rl-marker.rl-mk-ring { box-shadow: 0 0 0 2px var(--rl-glaze, #3fb8a8); }
+.rl-marker .rl-mk-pip { position: absolute; top: -2px; right: -2px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--rl-warn, #e6b36a); box-shadow: 0 0 0 1.5px var(--rl-bg, #171411); display: none; }
+.rl-marker.rl-mk-dot .rl-mk-pip { display: block; }
+
+/* In-place questions (RR27): "Leave? Yes · No". */
+.rl-ask-place { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.rl-ask-q { font-size: 13px; color: var(--rl-text); white-space: nowrap; }
+
+/* The call bar (RR24 to RR29): on a host page's other tabs. One slim row; folded, nothing on a computer (the room's
+   tab marker opens it), a round chip above the toolbar on a phone. */
+.rl.rl-callbar { max-width: none; margin: 0; padding: 0; background: var(--rl-well); border-bottom: 1px solid var(--rl-line); font-size: 13px; }
+.rl.rl-callbar[hidden] { display: none; }
+.rl-cb-row, .rl-cb-popped { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 4px 10px; }
+.rl.rl-callbar button { min-height: 30px; padding: 2px 10px; font-size: 13px; white-space: nowrap; flex: none; }
+.rl-cb-what { flex: 1 1 0; min-width: 0; display: flex; align-items: center; }
+.rl-cb-what-line, .rl-cb-need { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rl-cb-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--rl-text); }
+.rl-cb-stage { color: var(--rl-muted); }
+.rl-cb-need .rl-cb-text { color: var(--rl-warn); font-weight: 600; }
+.rl-cb-need[data-need="prompt"] .rl-cb-text { color: var(--rl-glaze); }
+.rl-cb-sharing .rl-cb-text { color: var(--rl-glaze); }
+.rl-cb-people { flex: none; display: inline-flex; align-items: center; }
+.rl-cb-chips { display: flex; gap: 4px; }
+.rl-cb-mic[aria-pressed="true"] { border-color: var(--rl-glaze); color: var(--rl-glaze); }
+.rl.rl-callbar .rl-cb-back { border-color: var(--rl-glaze); }
+.rl.rl-callbar .rl-cb-fold, .rl.rl-callbar .rl-cb-more { width: 32px; padding: 0; background: none; border-color: transparent; color: var(--rl-muted); font-size: 16px; }
+.rl-cb-popped .rl-cb-text { flex: 1 1 0; color: var(--rl-muted); }
+.rl-cb-needs { box-shadow: inset 3px 0 0 var(--rl-warn); }
+.rl-cb-menu { position: absolute; right: 8px; bottom: calc(100% + 6px); z-index: 70; display: grid; gap: 6px; padding: 8px;
+  background: var(--rl-panel); border: 1px solid var(--rl-line); border-radius: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, .5); }
+.rl-cb-menu[hidden] { display: none; }
+.rl.rl-callbar .rl-cb-chip { display: none; }
+/* A phone: above the toolbar; the row shows the count, Mute, Back to the room and "⋯" (Fold, Leave); what needs you,
+   or a notice, gets its own line above. Folded, a round chip at the right edge (RR29). */
+.rl.rl-callbar.rl-cb-phone { position: relative; border-bottom: 0; border-top: 1px solid var(--rl-line); }
+.rl-cb-phone .rl-cb-row { flex-wrap: wrap; gap: 6px; padding: 4px 8px; }
+.rl-cb-phone .rl-cb-what { order: -1; flex: 1 1 100%; }
+.rl-cb-phone:not(.rl-cb-needs) .rl-cb-what:not(:has(.rl-cb-notice)) { display: none; }
+.rl-cb-phone .rl-cb-people { margin-right: auto; }
+.rl.rl-callbar.rl-cb-phone.rl-cb-folded { background: none; border: 0; height: 0; overflow: visible; }
+.rl.rl-callbar.rl-cb-phone .rl-cb-chip:not([hidden]) { display: grid; place-items: center; position: absolute; right: 12px; bottom: 10px; z-index: 60;
+  width: 44px; height: 44px; min-height: 0; padding: 0; border-radius: 50%; background: var(--rl-panel); border: 1px solid var(--rl-glaze);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45); }
+.rl-cb-chip .rl-marker { width: 26px; height: 26px; }
+.rl-cb-chip .rl-marker svg { width: 18px; height: 18px; }
+
+/* The floating window (RR30): its own small page (Document Picture-in-Picture), with copies of the page's styles. */
+html.rl-float-html, body.rl-float-body { height: 100%; margin: 0; background: #171411; }
+.rl.rl-float { max-width: none; margin: 0; padding: 8px; height: 100%; display: flex; flex-direction: column; gap: 8px; font-size: 13px; overflow: hidden; }
+.rl.rl-float button { min-height: 30px; padding: 2px 10px; font-size: 13px; white-space: nowrap; }
+.rl-float[data-layout="picture"] { padding: 0; gap: 0; }
+.rl-fl-picture { position: relative; flex: 1 1 auto; min-height: 0; background: #000; }
+.rl-fl-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.rl-fl-strip { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--rl-well); border-top: 1px solid var(--rl-line); }
+.rl-fl-strip-people { margin-right: auto; display: inline-flex; }
+.rl-fl-need { padding: 6px 8px; background: var(--rl-panel); border-top: 1px solid var(--rl-warn); }
+.rl-fl-need .rl-cb-need { flex-wrap: wrap; }
+.rl-fl-people .rl-cb-chips { flex-wrap: wrap; }
+.rl-fl-what { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; }
+.rl-fl-what .rl-cb-need, .rl-fl-what .rl-cb-what-line { flex-wrap: wrap; }
+.rl-fl-what .rl-cb-text { white-space: normal; }
+.rl-fl-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.rl-fl-mic[aria-pressed="true"] { border-color: var(--rl-glaze); color: var(--rl-glaze); }
+.rl.rl-float .rl-fl-back { border-color: var(--rl-glaze); }
