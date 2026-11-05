@@ -129,6 +129,25 @@ checks (`npm run dev`).
    own window · Bring it back". The first screen share in a call shows a one-time hint in the room: "Presenting from
    another program? Pop out the room to keep it on top." `onBackToRoom` lets the host page bring the room's tab to the
    front (Raku does). On the dev page the room's own Pop out works; the call bar is for a host page with tabs.
+15. **Live Pong** (`tiles/pong/`, Nov 2026; `claude/rooms-pong-plan.md`, P1 to P22): a second live tile, built to
+   find out whether live tiles can carry real-time play, not just a poll. Two-player Pong in the Thunderbird Café
+   Station Pong's look. Shared live, anyone taps **I'd like to play** (with a short typed name, or "Player N") and
+   the first two on the list play, first to 7; the others watch, and after a game players tap again. There is no
+   referee copy: every copy applies the same messages in the room's one order (`pong-state.js`), so every copy
+   reaches the same list, score and result. The ball travels as events (a serve; each hit says where the ball goes
+   from the paddle), drawn in between on every screen (`pong-physics.js`: straight runs, mirrored at the side
+   walls); the receiving player's own copy calls its hit or miss, where its paddle really is; on the other screens
+   the ball waits at that player's line for the call (that wait is the round trip between the two players). The
+   only stream is each player's paddle (10 a second by default; the tile keeps inside the room's limit so a hit is
+   never refused), drawn on the other screens one update behind. Pause waits for the end of the rally; a player
+   gone for ~15 s loses by default; a player who reloads comes back to the same game (the point is played again).
+   A gauge button shows the speed: the round trip, the paddle updates arriving, whether the room's limits push
+   back, the paddle rate (5, 10, 15, 20), and **Copy numbers** (a few lines to paste). Players see themselves on
+   the left (at the bottom on a phone held upright); keys on computers (↑ ↓ or W/S), a finger on touch screens
+   (no faster than the keys); the mouse doesn't move the paddle. Alone (Raku, a gallery, a room before it's
+   shared live) it plays the computer. It's played on trust: each player's copy calls its own shots, so someone
+   who changed the tile in their own browser could cheat; it's for friends. Its `live-talk.js` is the poll's,
+   unchanged.
 
 ## Try it on this computer
 
@@ -156,6 +175,12 @@ site. Without `npm install` here the page still runs, and says it can't open til
 tiles through a stand-in for the loader, since it can't install it.)
 
 On one computer both windows hear the same microphone, so expect echo: mute one, or use headphones.
+
+To feel how a slower network plays (Live Pong, `claude/rooms-pong-plan.md` P19), add `livedelay=…` to the dev
+page's address in every window, e.g. http://127.0.0.1:5190/?livedelay=100 (and to the invite link, before its
+`#`): each live message a page sends to another computer then leaves that many milliseconds late (at most 2000),
+as a real network would hold it. A guest's copy is one hop from the host's page, so its round trip is two
+delays; between two guests a message takes two hops. Only the dev page has this knob.
 
 TURN on this computer: the local relay has no TURN key, so the page shows "The fallback relay isn't
 available right now…" and everyone connects directly (fine on one computer). To try the real Cloudflare TURN
@@ -335,6 +360,14 @@ and nothing is kept: when the room ends, they're gone.
   live sharing: the host's own goes ahead, a guest's goes to the host). Its hello lists the requests it
   decides; the page decides any other itself, the same way. It runs only on the host's page, hidden. Opened
   on its own it shows its card.
+- `tiles/pong/`: Live Pong (see 15). `pong-state.js` (the list, the game, the score: every message checked, no
+  browser parts; `test/pong-state.test.mjs`), `pong-physics.js` (the court, the ball's path, serves and returns,
+  the computer's paddle), `pong.js` (the screen: drawing, keys and touch, the calls, the stream, catching up,
+  the speed readout), `live-talk.js` (the poll's). `test/browser/check_pong.mjs` runs it in rooms on the dev page:
+  whole games on three and four pages, the list and names, pause, the readout, the paddle rate at 20, the delay
+  knob at 100 ms (host vs guest, then guest vs guest: round trips and the wait at the paddle), a late joiner on a
+  phone held upright, a player's reload, the host's reload, a player leaving for good, and nothing played going
+  through the relay (about three minutes).
 - `tiles/poll/`: the live poll. Ask a question (or pick a ready-made one, `ready.js`); everyone votes, one
   vote each that you can change; the results update live. The first to ask owns the poll (only they close
   it or start a new one, unless they've left). `poll-state.js` is its logic (tested in Node); `live-talk.js`

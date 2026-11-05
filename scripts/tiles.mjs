@@ -3,6 +3,8 @@
 //   house   the room's rules, hidden on the host's page
 //   poll    the live poll (live tiles): a demo tile opened for everyone by its address, then shared live.
 //           It names no address (it also shows up in Raku and the galleries, where it's a poll for one).
+//   pong    Live Pong (rooms-pong-plan.md): two-player Pong shared live, built to measure real-time play.
+//           Alone (Raku, the galleries) it plays the computer; it names no address either.
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +25,13 @@ export const TILES = {
     description: 'Ask a question with up to six answers; everyone votes, and the results update as they come in. Shared live in a room, everyone in it votes in the same poll; on its own it’s a poll for one. Its live-talk.js shows how a tile talks to the other copies of itself.',
     sizing: { width: 480, height: 440 },
     files: ['index.html', 'poll.css', 'poll.js', 'poll-state.js', 'live-talk.js', 'ready.js'],
+  },
+  pong: {
+    name: 'Live Pong',
+    // The owner's wording (rooms-pong-plan.md, P21).
+    description: 'Play Pong with others in the room. With more than two, people take turns. On its own, play the computer.',
+    sizing: { width: 720, height: 540 },
+    files: ['index.html', 'pong.css', 'pong.js', 'pong-state.js', 'pong-physics.js', 'live-talk.js'],
   },
 };
 // Card pictures, made by scripts/make-card-art.py.

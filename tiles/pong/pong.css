@@ -1,0 +1,72 @@
+/* Live Pong: the Thunderbird Café Station Pong's CRT look (green phosphor, white or amber; scanlines and a
+   vignette), with the room's parts (the list, names, the speed readout) in the same monospace glow. */
+:root {
+  --fg: #4dff88; --ball: #eaffea; --dim: #2f8f55; --faint: #173d26; --warn: #ffd166;
+  --bg: #000; --panel: rgba(4, 12, 6, .94);
+  color-scheme: dark;
+}
+html[data-theme="white"] { --fg: #e8e8e8; --ball: #ffffff; --dim: #8a8a8a; --faint: #333; }
+html[data-theme="amber"] { --fg: #ffb000; --ball: #ffe0a0; --dim: #a06e00; --faint: #3d2a00; --warn: #ff8a5c; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
+body {
+  font: 14px/1.4 "Courier New", Courier, monospace; display: flex; flex-direction: column; overflow: hidden;
+  padding: 8px 10px 10px; gap: 6px;
+}
+header, footer { flex: none; }
+header { display: flex; align-items: center; gap: 8px; min-height: 36px; }
+#dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); flex: none; }
+html[data-live="live"] #dot { background: var(--fg); box-shadow: 0 0 8px var(--fg); }
+#status { margin: 0; font-size: 13px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+#status[data-state="live"] { color: var(--fg); }
+#status[data-state="paused"] { color: var(--warn); }
+.grow { flex: 1; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+button, select, input { font: inherit; color: var(--fg); }
+button {
+  background: rgba(0, 0, 0, .6); border: 1px solid var(--dim); border-radius: 8px; padding: 4px 12px;
+  min-height: 34px; cursor: pointer; text-shadow: 0 0 6px var(--fg);
+}
+button:hover:not(:disabled) { border-color: var(--fg); }
+button:disabled { opacity: .5; cursor: default; }
+button[aria-expanded="true"] { border-color: var(--fg); background: var(--faint); }
+button:focus-visible, input:focus-visible, select:focus-visible, canvas:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.icon { width: 36px; padding: 0; font-size: 17px; display: inline-flex; align-items: center; justify-content: center; }
+.icon svg { display: block; filter: drop-shadow(0 0 3px var(--fg)); }
+.primary { background: var(--fg); color: #000; border-color: var(--fg); font-weight: 700; text-shadow: none; }
+input[type="text"], select { background: #020a04; border: 1px solid var(--dim); border-radius: 8px; padding: 5px 9px; min-height: 34px; }
+html[data-theme="white"] input[type="text"], html[data-theme="white"] select { background: #0a0a0a; }
+html[data-theme="amber"] input[type="text"], html[data-theme="amber"] select { background: #0a0600; }
+
+#stage { position: relative; flex: 1; min-height: 160px; border: 1px solid var(--faint); border-radius: 6px; overflow: hidden; }
+canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+#scan, #vig { position: absolute; inset: 0; pointer-events: none; }
+#scan { background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0, rgba(0,0,0,0) 1px, rgba(0,0,0,.18) 2px, rgba(0,0,0,.18) 3px); mix-blend-mode: multiply; }
+#vig { background: radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,.55) 100%); }
+html[data-crt="off"] #scan, html[data-crt="off"] #vig { display: none; }
+
+.panel {
+  position: absolute; top: 8px; right: 8px; width: min(320px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--dim); border-radius: 10px; padding: 10px 12px; font-size: 13px; z-index: 2;
+}
+.panel h2 { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.panel dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; }
+.panel dt { color: var(--dim); }
+.panel dd { margin: 0; font-variant-numeric: tabular-nums; }
+.panel .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.panel label { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.panel select { width: 100%; }
+.rates button { min-width: 44px; padding: 2px 8px; }
+.rates button[aria-pressed="true"] { background: var(--fg); color: #000; text-shadow: none; }
+.slowed { color: var(--warn); font-weight: 700; }
+.panel textarea { width: 100%; margin-top: 8px; min-height: 90px; font: 12px/1.35 "Courier New", monospace; color: var(--fg); background: #020a04; border: 1px solid var(--dim); border-radius: 6px; }
+.panel .note { margin: 6px 0 0; color: var(--dim); font-size: 12px; }
+
+footer { display: flex; flex-direction: column; gap: 6px; }
+#line { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+#actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+#actions:empty { display: none; }
+#actions input { flex: 1; min-width: 140px; max-width: 260px; }
+#notice { margin: 0; font-size: 13px; color: var(--warn); }
+#notice:empty { display: none; }

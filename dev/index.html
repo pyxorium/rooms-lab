@@ -47,6 +47,24 @@
       const times = window.__roomsLabTimes ? { ...TIMES, ...window.__roomsLabTimes } : undefined;
       window.__roomsLab = mountRoomPage(root, { loadHouse, tileHost, signIn: signIn.ready() ? signIn : null, ...(times ? { times } : {}) });
     }
+    // ?livedelay=80 (this dev page only; never on the site or in Raku): every live tile message this page sends
+    // to another computer leaves 80 ms late, as if the network were that slow (one delay per hop: a guest's
+    // copy to the host's page is one hop, guest to guest two). For trying Live Pong's speed (rooms-pong-plan.md, P19).
+    const liveDelay = Math.max(0, Math.min(2000, Number(new URLSearchParams(location.search).get('livedelay')) || 0));
+    if (liveDelay) {
+      setInterval(() => {
+        const mesh = window.__roomsLab?.room?.mesh;
+        if (!mesh || mesh.__delayed) return;
+        const send = mesh.sendData.bind(mesh);
+        mesh.sendData = (id, obj) => {
+          if (!String(obj?.kind).startsWith('live-')) return send(id, obj);
+          if (!mesh.channelOpen(id)) return false;
+          setTimeout(() => send(id, obj), liveDelay);       // the same delay for each, so the order is kept
+          return true;
+        };
+        mesh.__delayed = true;
+      }, 20);
+    }
   </script>
 </body>
 </html>

@@ -23,7 +23,7 @@ test('a dry run writes nothing and asks nothing', async () => {
   const pds = createFakePds({ did: ACCOUNT, handle: 'thunderbird.cafe' });
   const r = await run(pds, { dryRun: true, askHidden: async () => { throw new Error('asked'); } });
   assert.equal(r.changed, false);
-  assert.deepEqual(r.plan.map((t) => t.id), ['house', 'poll']);
+  assert.deepEqual(r.plan.map((t) => t.id), ['house', 'poll', 'pong']);
   assert.ok(!pds.calls.some((c) => c.includes('uploadBlob') || c.includes('Record')));
 });
 
@@ -84,6 +84,23 @@ test('one tile at a time: publishing the poll alone leaves the house as it is', 
   assert.ok(!/thunderbird\.cafe\/webtiles|rooms-lab\//.test(value.tile.description), 'the poll names no address');
 });
 
+test('Live Pong alone: "node scripts/publish.mjs pong" leaves the house and the poll as they are', async () => {
+  const pds = createFakePds({ did: ACCOUNT, handle: 'thunderbird.cafe' });
+  const house = { uri: `at://${ACCOUNT}/ing.dasl.masl/3house`, cid: 'bafyreihouse', manifestCid: 'm', publishedAt: 'then' };
+  const poll = { uri: `at://${ACCOUNT}/ing.dasl.masl/3poll`, cid: 'bafyreipoll', manifestCid: 'p', publishedAt: 'then' };
+  const r = await run(pds, { published: { account: ACCOUNT, handle: 'thunderbird.cafe', house, poll }, only: ['pong'] });
+  assert.equal(r.changed, true);
+  assert.deepEqual(r.published.house, house);
+  assert.deepEqual(r.published.poll, poll);
+  const value = pds.records.get(`ing.dasl.masl/${r.published.pong.uri.split('/').pop()}`).value;
+  assert.equal(value.tile.name, 'Live Pong');
+  assert.equal(value.tile.description, 'Play Pong with others in the room. With more than two, people take turns. On its own, play the computer.');
+  assert.deepEqual(Object.keys(value.tile.resources).sort(), ['/', '/banner.png', '/icon.png', '/live-talk.js', '/pong-physics.js', '/pong-state.js', '/pong.css', '/pong.js']);
+  assert.match(value.tile.resources['/']['content-security-policy'], /connect-src 'self'/, 'Live Pong can\'t reach the network');
+  assert.match(value.tile.resources['/']['content-security-policy'], /form-action 'none'/, 'form-action (not the station Pong\'s form-src typo)');
+  assert.ok(!/form-src/.test(value.tile.resources['/']['content-security-policy']));
+});
+
 test('a wrong password or "no" publishes nothing', async () => {
   const pds = createFakePds({ did: ACCOUNT, handle: 'thunderbird.cafe' });
   await assert.rejects(run(pds, { password: 'wrong' }), /Invalid identifier or password/);
@@ -125,7 +142,9 @@ test('the lexicon is published from the real published.json (tiles already there
   const { lexicons: _done, ...before } = real;
   const pds = createFakePds({ did: ACCOUNT, handle: 'thunderbird.cafe' });
   const dry = await run(pds, { published: before, dryRun: true });
-  assert.deepEqual(dry.plan, [], 'no tile due');
+  // tiles not published yet (Live Pong, until the owner publishes it) are due; the published ones are not
+  const due = Object.keys(TILES).filter((id) => !before[id]);
+  assert.deepEqual(dry.plan.map((t) => t.id), due, 'only unpublished tiles due');
   assert.deepEqual(dry.lexiconsDue, LEXICON_IDS);
   const done = await run(pds, { published: before });
   assert.equal(done.changed, true);
@@ -135,7 +154,7 @@ test('the lexicon is published from the real published.json (tiles already there
   assert.equal(done.published.lexicons['cafe.thunderbird.rooms.authJoin'].cid, rec.cid);
   assert.equal(done.published.house.uri, before.house.uri, 'the house untouched');
   assert.equal(done.published.poll.uri, before.poll.uri, 'the poll untouched');
-  assert.ok(!pds.calls.some((c) => c.includes('createRecord')), 'no tile record made');
+  assert.equal(pds.calls.filter((c) => c.includes('createRecord')).length, due.length, 'a tile record only for each unpublished tile');
   const again = await run(pds, { published: done.published });
   assert.equal(again.changed, false, 'nothing due the second time');
 });

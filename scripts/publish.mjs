@@ -1,10 +1,10 @@
-// Publishes the Rooms lab's tiles (the house, the live poll) and its lexicon (the "Rooms" permission set,
+// Publishes the Rooms lab's tiles (the house, the live poll, Live Pong) and its lexicon (the "Rooms" permission set,
 // step 8) from the thunderbird.cafe account (modelled on daisy-tiles' scripts/publish.mjs). Run from
 // C:\thunderbird-cafe\rooms-lab (Node 22, no packages needed):
 //
 //   node scripts/publish.mjs                 publish every tile that isn't published yet, and the lexicon
 //                                            when it's new or changed
-//   node scripts/publish.mjs poll            only that tile (house, poll), if it isn't published yet
+//   node scripts/publish.mjs pong            only that tile (house, poll, pong), if it isn't published yet
 //   node scripts/publish.mjs --dry-run …     show what would be published; ask nothing, write nothing
 //   node scripts/publish.mjs --again house   publish that tile again, as a new record (a new address);
 //                                            --again needs the tile's name, so nothing is republished by accident
