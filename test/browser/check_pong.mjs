@@ -263,6 +263,11 @@ try {
   step('the speed readout: Robin opens the gauge: round trips measured, the other paddle\'s updates arriving; Copy numbers');
   const rf = await frame(robin);
   await rf.click('#gaugeBtn');
+  // V3: the gauge shows one line under the court (covering nothing); a click on it opens the details
+  await pongUntil(robin, () => { const l = document.getElementById('gaugeLine'); return !l.hidden && /^\d+ ms · [\d.]+\/s in · held \d+ · limits \d+ ▾$/.test(l.textContent); }, undefined, 15000);
+  assert.equal(await pong(robin, () => document.getElementById('gauge').hidden), true, 'the details stay closed until the line is clicked');
+  await rf.click('#gaugeLine');
+  assert.equal(await pong(robin, () => document.getElementById('gauge').parentElement.id), 'stage', 'on a wide card the details open over the court, as before');
   await pongUntil(robin, () => /ms typical/.test(document.getElementById('g-rtt')?.textContent || ''), undefined, 15000);
   await pongUntil(robin, () => window.__pong.numbers().arriving > 2, undefined, 15000);
   await rf.click('#copyBtn');
@@ -379,6 +384,31 @@ try {
   await same([nick, robin, ted, zoe], 'the late joiner');
   assert.equal((await pong(zoe, () => window.__pong.view)).portrait, true);
   await shot(zoe, 'phone-upright');
+
+  step('the speed readout on a phone (V3): one line under the court that keeps up during play; its details open below the court, never over it');
+  const zf = await frame(zoe);
+  await zf.click('#gaugeBtn');
+  const lineOk = () => { const l = document.getElementById('gaugeLine'), c = document.getElementById('court').getBoundingClientRect(), r = l.getBoundingClientRect(); return !l.hidden && r.top >= c.bottom - 1 && /^\d+ ms · /.test(l.textContent); };
+  await pongUntil(zoe, lineOk, undefined, 15000);
+  const firstLine = await pong(zoe, () => document.getElementById('gaugeLine').textContent);
+  await pongUntil(zoe, (t) => document.getElementById('gaugeLine').textContent !== t, firstLine, 15000);   // it keeps up
+  await zf.click('#gaugeLine');
+  const geo = await pong(zoe, () => {
+    const g = document.getElementById('gauge'), c = document.getElementById('court').getBoundingClientRect(), r = g.getBoundingClientRect();
+    return { hidden: g.hidden, below: g.classList.contains('below'), inFooter: g.parentElement.tagName, gTop: r.top, cBottom: c.bottom, cHeight: c.height, line: document.getElementById('gaugeLine').textContent };
+  });
+  console.log(`    phone: ${JSON.stringify(geo)}`);
+  assert.ok(!geo.hidden && geo.below && geo.inFooter === 'FOOTER', 'the details sit under the court');
+  assert.ok(geo.gTop >= geo.cBottom - 1, 'the details don\'t cover the court');
+  assert.ok(geo.cHeight > 190, 'the court keeps most of its room (the details scroll)');
+  assert.match(geo.line, /▴$/, 'the line shows the details are open');
+  await shot(zoe, 'phone-readout');
+  await zf.click('#copyBtn');
+  await pongUntil(zoe, () => /^Live Pong numbers\nRole: watching; 4 here/.test(document.querySelector('#gauge textarea')?.value || ''));
+  await zf.click('#gaugeLine');
+  assert.equal(await pong(zoe, () => document.getElementById('gauge').hidden), true, 'a second tap closes the details');
+  await zf.click('#gaugeBtn');
+  assert.equal(await pong(zoe, () => document.getElementById('gaugeLine').hidden), true, 'the gauge button hides the line');
 
   step('Robin reloads mid-rally: her copy keeps its id, catches up and says it\'s back; the point is played again; the score is kept');
   const before = JSON.parse(await S(nick)).game;

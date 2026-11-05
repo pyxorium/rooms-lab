@@ -256,7 +256,7 @@ function sendPaddle() {
 }
 let pingAt = 0;
 function sendPing() {
-  if (mode !== 'live' || !synced || $('#gauge').hidden || nowMs() - pingAt < 2000) return;
+  if (mode !== 'live' || !synced || !gaugeOn || nowMs() - pingAt < 2000) return;
   pingAt = nowMs();
   if (!bucket.take(6)) return;
   const k = ++stats.k;
@@ -731,16 +731,53 @@ function buildGear() {
     sel('The computer (alone)', settings.bot, [['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard']], (v) => { settings.bot = v; }),
   );
 }
-function togglePanel(id, btn) {
-  const p = $(id);
-  const open = p.hidden;
-  for (const [pid, bid] of [['#gauge', '#gaugeBtn'], ['#gear', '#gearBtn']]) { $(pid).hidden = true; $(bid).setAttribute('aria-expanded', 'false'); }
-  p.hidden = !open; $(btn).setAttribute('aria-expanded', String(open));
-  if (open && id === '#gauge') { buildGauge(); pingAt = 0; }
-  if (open && id === '#gear') buildGear();
+// The speed readout (V3): the gauge button shows one line under the court (it covers nothing, so you can play
+// with it on); a tap on the line opens the details: below the court on a phone or a narrow card (the court gets
+// a little smaller while it's open), over the court's right side on a wide one, as before.
+let gaugeOn = false;
+const narrow = () => innerWidth < 600 || innerHeight > innerWidth * 1.15;
+function closeGauge() {
+  const p = $('#gauge');
+  p.hidden = true; $('#gaugeLine').setAttribute('aria-expanded', 'false');
+  drawLine();
 }
-$('#gaugeBtn').addEventListener('click', () => togglePanel('#gauge', '#gaugeBtn'));
-$('#gearBtn').addEventListener('click', () => togglePanel('#gear', '#gearBtn'));
+function setGauge(on) {
+  gaugeOn = on;
+  $('#gaugeBtn').setAttribute('aria-expanded', String(on));
+  $('#gaugeLine').hidden = !on;
+  if (on) { pingAt = 0; drawLine(); } else closeGauge();
+}
+function toggleDetails() {
+  const p = $('#gauge');
+  if (!p.hidden) { closeGauge(); return; }
+  $('#gear').hidden = true; $('#gearBtn').setAttribute('aria-expanded', 'false');
+  const below = narrow();
+  p.classList.toggle('below', below);
+  if (below) $('#gaugeLine').after(p); else $('#stage').append(p);
+  buildGauge();
+  p.hidden = false; $('#gaugeLine').setAttribute('aria-expanded', 'true');
+  drawLine();
+}
+function drawLine() {
+  const line = $('#gaugeLine');
+  if (line.hidden) return;
+  const x = numbers();
+  const total = x.limits.rate + x.limits.room + x.limits.other;
+  const rtt = x.rtt ? `${x.rtt.typical} ms` : mode === 'live' ? 'measuring…' : '— ms';
+  const text = `${rtt} · ${x.arriving.toFixed(1)}/s in · held ${x.heldBack} · ${x.slowed ? 'slowed by the room' : `limits ${total}`} ${$('#gauge').hidden ? '▾' : '▴'}`;
+  if (line.textContent !== text) line.textContent = text;
+  line.classList.toggle('slowed', x.slowed);
+}
+function toggleGear() {
+  const p = $('#gear');
+  const open = p.hidden;
+  closeGauge();
+  p.hidden = !open; $('#gearBtn').setAttribute('aria-expanded', String(open));
+  if (open) buildGear();
+}
+$('#gaugeBtn').addEventListener('click', () => setGauge(!gaugeOn));
+$('#gaugeLine').addEventListener('click', toggleDetails);
+$('#gearBtn').addEventListener('click', toggleGear);
 $('#pauseBtn').addEventListener('click', togglePause);
 
 // ---- Input: keys on computers, a finger on touch screens; the mouse doesn't move the paddle (P10) ----
@@ -784,7 +821,7 @@ function frame(t) {
   lastFrame = t;
   step(dt);
   draw();
-  if (!$('#gauge').hidden && Math.floor(t / 250) !== Math.floor((t - dt * 1000) / 250)) drawGauge();
+  if (gaugeOn && Math.floor(t / 250) !== Math.floor((t - dt * 1000) / 250)) { drawLine(); drawGauge(); }
   requestAnimationFrame(frame);
 }
 

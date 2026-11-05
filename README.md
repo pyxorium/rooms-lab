@@ -141,7 +141,8 @@ checks (`npm run dev`).
    only stream is each player's paddle (10 a second by default; the tile keeps inside the room's limit so a hit is
    never refused), drawn on the other screens one update behind. Pause waits for the end of the rally; a player
    gone for ~15 s loses by default; a player who reloads comes back to the same game (the point is played again).
-   A gauge button shows the speed: the round trip, the paddle updates arriving, whether the room's limits push
+   A gauge button shows the speed in one line under the court (it covers nothing, so you can play with it on); a tap
+   on the line opens the details (below the court on a phone or narrow card, over its right side on a wide one): the round trip, the paddle updates arriving, whether the room's limits push
    back, the paddle rate (5, 10, 15, 20), the game's totals (paddle updates sent and arrived, the busiest second;
    kept as "Last game" after it ends), and **Copy numbers** (a few lines to paste). Players see themselves on
    the left (at the bottom on a phone held upright); keys on computers (↑ ↓ or W/S), a finger on touch screens

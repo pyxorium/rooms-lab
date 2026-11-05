@@ -64,6 +64,14 @@ html[data-crt="off"] #scan, html[data-crt="off"] #vig { display: none; }
 .panel .note { margin: 6px 0 0; color: var(--dim); font-size: 12px; }
 
 footer { display: flex; flex-direction: column; gap: 6px; }
+/* The speed readout's one line (V3): under the court while the gauge is on, so nothing covers the court; a tap
+   opens the details (below the court on a phone or a narrow card, over the court's right side on a wide one). */
+.gauge-line {
+  text-align: left; font-size: 13px; min-height: 30px; padding: 3px 10px; border-color: var(--faint);
+  font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: none;
+}
+.gauge-line.slowed { color: var(--warn); border-color: var(--warn); }
+.panel.below { position: static; width: 100%; max-height: 30vh; padding: 8px 10px; }
 #line { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 #actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 #actions:empty { display: none; }
