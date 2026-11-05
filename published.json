@@ -21,9 +21,9 @@
     }
   },
   "pong": {
-    "uri": "at://did:plc:6vxjigxrqizmbo56gojxico3/ing.dasl.masl/3mzjwsxlt4f2g",
-    "cid": "bafyreif5clca27mdq4f6m5cjdrun7rohzknv2pjzxopoknvmtf66sppkva",
-    "manifestCid": "bafyreib2no3dluastqh7zbh2ioseqh5prydryvxacjqmtfarvovbojm2ee",
-    "publishedAt": "2026-11-05T03:36:01.989Z"
+    "uri": "at://did:plc:6vxjigxrqizmbo56gojxico3/ing.dasl.masl/3mzl3eexa3v22",
+    "cid": "bafyreifwdze772kvl7ewmugcbfirrjync2gyri7jsdijnfkql3lgxyyibi",
+    "manifestCid": "bafyreihomgj47eyam7mihp3qltwfzwjnwtdzavxkoc4pdvsig23gsarn5y",
+    "publishedAt": "2026-11-05T14:30:01.462Z"
   }
 }
