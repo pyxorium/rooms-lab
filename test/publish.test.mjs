@@ -94,7 +94,7 @@ test('Live Pong alone: "node scripts/publish.mjs pong" leaves the house and the 
   assert.deepEqual(r.published.poll, poll);
   const value = pds.records.get(`ing.dasl.masl/${r.published.pong.uri.split('/').pop()}`).value;
   assert.equal(value.tile.name, 'Live Pong');
-  assert.equal(value.tile.description, 'Play Pong with others in the room. With more than two, people take turns. On its own, play the computer.');
+  assert.equal(value.tile.description, 'Play Pong with others in a Raku room. With more than two, people take turns. On its own, play the computer.');
   assert.deepEqual(Object.keys(value.tile.resources).sort(), ['/', '/banner.png', '/icon.png', '/live-talk.js', '/pong-physics.js', '/pong-state.js', '/pong.css', '/pong.js']);
   assert.match(value.tile.resources['/']['content-security-policy'], /connect-src 'self'/, 'Live Pong can\'t reach the network');
   assert.match(value.tile.resources['/']['content-security-policy'], /form-action 'none'/, 'form-action (not the station Pong\'s form-src typo)');

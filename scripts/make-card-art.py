@@ -3,7 +3,7 @@ palette:
   house   a room (a rounded frame) with three people in it and the house's copper diamond above them
   poll    the live poll: three result bars, one ticked, and the live dot
   pong    Live Pong: the station Pong's court in green phosphor (two glowing paddles, the ball, the dashed net,
-          scanlines), with "Live Pong / play together in a room" on the banner (rooms-pong-plan.md, P22)
+          scanlines), with "Live Pong / play together in a Raku room" on the banner (rooms-pong-plan.md, P22, V2)
 Needs Python with Pillow. The pictures are kept in the folders: run this again only when a look changes (then
 publish that tile again). Fonts: DejaVu (Linux) else the default font, so draw them where DejaVu exists.
 
@@ -173,7 +173,7 @@ def pong_icon():
 
 
 def pong_banner():
-    court(1280, 720, 1.44, ('Live Pong', 'play together in a room')).save(os.path.join(PONG_OUT, 'banner.png'))
+    court(1280, 720, 1.44, ('Live Pong', 'play together in a Raku room')).save(os.path.join(PONG_OUT, 'banner.png'))
 
 
 if __name__ == '__main__':

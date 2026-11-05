@@ -269,9 +269,10 @@ try {
   await pongUntil(robin, () => { const t = document.querySelector('#gauge textarea'); return t && !t.hidden && /^Live Pong numbers\nRole: playing; 3 here\nRound trip: typical \d+ ms, worst \d+ ms/.test(t.value); });
   const text = await pong(robin, () => document.querySelector('#gauge textarea').value);
   await shot(robin, 'gauge');
-  assert.match(text, /Paddle rate setting: 10 a second; sent [\d.]+ a second; held back \d+/);
+  assert.match(text, /Paddle updates arriving: [\d.]+ a second \(last 2 s\)/);
+  assert.match(text, /Paddle rate setting: 10 a second; sent [\d.]+ a second \(last 2 s\); held back \d+/);
   assert.match(text, /Room limits: \d+ \(rate \d+, room \d+, other \d+\)/);
-  assert.match(text, /Messages this game: \d+/);
+  assert.match(text, /This game: \d+ messages; paddle updates sent [1-9]\d*, arrived [1-9]\d*; busiest second [1-9]\d* arriving/, 'game totals (V2)');
   assert.ok(!text.includes(ids.Robin) && !text.includes('Robin'), 'no ids or names in the numbers');
   console.log(text.split('\n').map((l) => `    ${l}`).join('\n'));
 
@@ -279,7 +280,7 @@ try {
   await rf.click('.rates button[data-rate="20"]');
   await auto(robin, 'busy');                                        // her paddle never keeps still
   const hitsBefore = await pong(robin, () => (window.__pong.state.game?.rally?.hits ?? 0));
-  await new Promise((r) => setTimeout(r, 9000));
+  await new Promise((r) => setTimeout(r, 14000));                  // long enough to use up the burst even on slow frames
   const n20 = await pong(robin, () => window.__pong.numbers());
   console.log(`    at 20 a second: sent ${n20.sent}, held back ${n20.heldBack}, room limits ${JSON.stringify(n20.limits)}; Robin's frames every ${await pong(robin, () => window.__pong.frameMs)} ms`);
   assert.equal(n20.limits.rate + n20.limits.room, 0, 'the room never had to refuse a message: the tile kept inside its limit (10 a second, bursts of 30)');
@@ -312,6 +313,15 @@ try {
   assert.deepEqual(st.list, []);
   assert.match(await pong(ted, () => window.__pong.center), /^Robin wins 7–\d$/);
   assert.equal(await pong(robin, () => document.getElementById('playBtn')?.textContent), 'I’d like to play', 'Robin taps again to play again');
+
+  step('after the game, the readout still says what happened (V2: "Last game" totals, even with nobody moving)');
+  await new Promise((r) => setTimeout(r, 2500));                    // the last-2-seconds figures are 0 by now
+  const after = await pong(robin, () => window.__pong.numbersText());
+  console.log(after.split('\n').map((l) => `    ${l}`).join('\n'));
+  assert.match(after, /Paddle updates arriving: 0\.0 a second \(last 2 s\)/);
+  const m = /Last game: (\d+) messages; paddle updates sent (\d+), arrived (\d+); busiest second (\d+) arriving/.exec(after);
+  assert.ok(m && +m[1] > 50 && +m[2] > 10 && +m[3] > 10 && +m[4] >= 3 && +m[4] <= 30, `the last game's totals are kept: ${after}`);
+  assert.equal(await pong(robin, () => document.getElementById('g-msgs-dt').textContent), 'Last game');
 
   // ======== Part 2: the delay knob: guest vs guest, a late joiner, comings and goings ========
   step('a new room with ?livedelay=100 on every page (the dev page only): every live message between computers leaves 100 ms late');

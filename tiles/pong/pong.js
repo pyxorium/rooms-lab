@@ -57,6 +57,9 @@ const stats = {
   sent: [],                                         // when this copy sent a paddle update (ms)
   heldBack: 0, limits: { rate: 0, room: 0, other: 0 }, limitAt: -1e9,
   gameMsgs: 0, gameG: null,
+  // Game totals (kept after the game ends, until the next one starts), so a copy taken after you stop
+  // moving still says what happened: paddle updates sent and arrived, and the busiest second's arrivals.
+  game: { sent: 0, arrived: 0, busiest: 0, sec: null, inSec: 0, over: false },
 };
 const recent = (arr, ms) => { const t = nowMs() - ms; while (arr.length && arr[0] < t) arr.shift(); return arr.length; };
 function rttSummary() {
@@ -174,10 +177,17 @@ function onApplied(n, from, data) {
     }
   }
   if (state.game && stats.gameG === state.game.g) stats.gameMsgs += 1;
+  const counting = state.game && stats.gameG === state.game.g;
   if (data.t === 'pad') {
     if (from !== you && state.game && data.g === state.game.g && typeof data.p === 'number' && Number.isFinite(data.p)) {
       pads.add(from, clampPaddle(data.p));
       stats.arrive.push(nowMs());
+      if (counting) {
+        const t = stats.game, sec = Math.floor(nowMs() / 1000);
+        t.arrived += 1;
+        if (sec !== t.sec) { t.sec = sec; t.inSec = 0; }
+        t.inSec += 1; t.busiest = Math.max(t.busiest, t.inSec);
+      }
     }
     return;
   }
@@ -194,7 +204,10 @@ function onApplied(n, from, data) {
 }
 
 function newGame() {
-  stats.gameG = state.game?.g ?? null; stats.gameMsgs = 0;
+  if (state.game) {             // a game starts: new totals (a game that ends keeps its own, as "Last game")
+    stats.gameG = state.game.g; stats.gameMsgs = 0;
+    stats.game = { sent: 0, arrived: 0, busiest: 0, sec: null, inSec: 0, over: false };
+  } else stats.game.over = true;
   pads.clear(); myPaddle.p = myPaddle.prev = COURT.width / 2; botPaddle.p = botPaddle.prev = COURT.width / 2;
   serveAt = null; goneSince = null; claimed = false;
 }
@@ -238,6 +251,7 @@ function sendPaddle() {
   stats.sentTimes.set(k, nowMs());
   if (stats.sentTimes.size > 200) stats.sentTimes.delete(stats.sentTimes.keys().next().value);
   stats.sent.push(nowMs());
+  stats.game.sent += 1;
   live.send({ t: 'pad', g: g.g, p: Math.round(myPaddle.p * 10) / 10, k });
 }
 let pingAt = 0;
@@ -643,6 +657,7 @@ function numbers() {
     role, here: mode === 'live' ? here.length : 1,
     rtt: r, arriving, sent, rate: settings.rate, heldBack: stats.heldBack,
     limits: { ...stats.limits }, slowed: nowMs() - stats.limitAt < 3000, gameMsgs: stats.gameMsgs,
+    game: { label: stats.game.over ? 'Last game' : 'This game', sent: stats.game.sent, arrived: stats.game.arrived, busiest: stats.game.busiest },
   };
 }
 function numbersText() {
@@ -651,10 +666,10 @@ function numbersText() {
     'Live Pong numbers',
     `Role: ${x.role}; ${x.here} here`,
     `Round trip: ${x.rtt ? `typical ${x.rtt.typical} ms, worst ${x.rtt.worst} ms (last ${x.rtt.n})` : 'none yet'}`,
-    `Paddle updates arriving: ${x.arriving.toFixed(1)} a second`,
-    `Paddle rate setting: ${x.rate} a second; sent ${x.sent.toFixed(1)} a second; held back ${x.heldBack}`,
+    `Paddle updates arriving: ${x.arriving.toFixed(1)} a second (last 2 s)`,
+    `Paddle rate setting: ${x.rate} a second; sent ${x.sent.toFixed(1)} a second (last 2 s); held back ${x.heldBack}`,
     `Room limits: ${x.limits.rate + x.limits.room + x.limits.other} (rate ${x.limits.rate}, room ${x.limits.room}, other ${x.limits.other})`,
-    `Messages this game: ${x.gameMsgs}`,
+    `${x.game.label}: ${x.gameMsgs} messages; paddle updates sent ${x.game.sent}, arrived ${x.game.arrived}; busiest second ${x.game.busiest} arriving`,
   ].join('\n');
 }
 function drawGauge() {
@@ -668,7 +683,9 @@ function drawGauge() {
   const total = x.limits.rate + x.limits.room + x.limits.other;
   set('g-lim', x.slowed ? `Slowed by the room (${total})` : total ? `none now (${total} so far)` : 'none', x.slowed ? 'slowed' : '');
   set('g-role', x.role);
-  set('g-msgs', String(x.gameMsgs));
+  set('g-msgs-dt', x.game.label);
+  set('g-msgs', `${x.gameMsgs} messages`);
+  set('g-pads', `sent ${x.game.sent} · arrived ${x.game.arrived} · busiest ${x.game.busiest}/s`);
   for (const b of panel.querySelectorAll('.rates button')) b.setAttribute('aria-pressed', String(Number(b.dataset.rate) === settings.rate));
 }
 function buildGauge() {
@@ -682,7 +699,8 @@ function buildGauge() {
       el('dt', {}, 'Sent'), el('dd', { id: 'g-sent' }),
       el('dt', {}, 'Room limits'), el('dd', { id: 'g-lim' }),
       el('dt', {}, 'You'), el('dd', { id: 'g-role' }),
-      el('dt', {}, 'This game'), el('dd', { id: 'g-msgs' })),
+      el('dt', { id: 'g-msgs-dt' }, 'This game'), el('dd', { id: 'g-msgs' }),
+      el('dt', {}, 'Paddles'), el('dd', { id: 'g-pads' })),
     el('div', { class: 'row rates', role: 'group', 'aria-label': 'Paddle updates a second' }, el('span', {}, 'Paddle rate:'),
       RATES.map((r) => el('button', { type: 'button', 'data-rate': r, onclick: () => { settings.rate = r; drawGauge(); } }, String(r)))),
     el('div', { class: 'row' }, el('button', { type: 'button', id: 'copyBtn', onclick: () => {
@@ -753,6 +771,7 @@ function resetLocal() {
   ball.key = null; ball.seg = null; ball.fly = null;
   pads.clear(); serveAt = null; goneSince = null; claimed = false; lastResult = null; wantName = false;
   stats.gameG = null; stats.gameMsgs = 0;
+  stats.game = { sent: 0, arrived: 0, busiest: 0, sec: null, inSec: 0, over: false };
   absentSince.clear();
 }
 

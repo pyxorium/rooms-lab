@@ -142,7 +142,8 @@ checks (`npm run dev`).
    never refused), drawn on the other screens one update behind. Pause waits for the end of the rally; a player
    gone for ~15 s loses by default; a player who reloads comes back to the same game (the point is played again).
    A gauge button shows the speed: the round trip, the paddle updates arriving, whether the room's limits push
-   back, the paddle rate (5, 10, 15, 20), and **Copy numbers** (a few lines to paste). Players see themselves on
+   back, the paddle rate (5, 10, 15, 20), the game's totals (paddle updates sent and arrived, the busiest second;
+   kept as "Last game" after it ends), and **Copy numbers** (a few lines to paste). Players see themselves on
    the left (at the bottom on a phone held upright); keys on computers (↑ ↓ or W/S), a finger on touch screens
    (no faster than the keys); the mouse doesn't move the paddle. Alone (Raku, a gallery, a room before it's
    shared live) it plays the computer. It's played on trust: each player's copy calls its own shots, so someone

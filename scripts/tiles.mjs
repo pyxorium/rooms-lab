@@ -29,7 +29,7 @@ export const TILES = {
   pong: {
     name: 'Live Pong',
     // The owner's wording (rooms-pong-plan.md, P21).
-    description: 'Play Pong with others in the room. With more than two, people take turns. On its own, play the computer.',
+    description: 'Play Pong with others in a Raku room. With more than two, people take turns. On its own, play the computer.',
     sizing: { width: 720, height: 540 },
     files: ['index.html', 'pong.css', 'pong.js', 'pong-state.js', 'pong-physics.js', 'live-talk.js'],
   },
