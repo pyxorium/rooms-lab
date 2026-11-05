@@ -19,5 +19,11 @@
       "cid": "bafyreih3pr5lapqhgltlu43u6to2r53nl2lsutdy756r5haptpbfsahxjy",
       "text": "{\"lexicon\":1,\"id\":\"cafe.thunderbird.rooms.authJoin\",\"description\":\"The Rooms permission set (thunderbird.cafe's Rooms lab): signing in lets a room show your verified handle. Requested with the rooms relay as the audience: include:cafe.thunderbird.rooms.authJoin?aud=did:web:relay.rooms.thunderbird.cafe%23rooms_relay\",\"defs\":{\"main\":{\"type\":\"permission-set\",\"title\":\"Rooms\",\"detail\":\"Lets rooms show your verified handle to the people in a room. Nothing in your account is read or changed.\",\"permissions\":[{\"type\":\"permission\",\"resource\":\"rpc\",\"lxm\":[\"cafe.thunderbird.rooms.join\"],\"inheritAud\":true}]}}}"
     }
+  },
+  "pong": {
+    "uri": "at://did:plc:6vxjigxrqizmbo56gojxico3/ing.dasl.masl/3mzjwsxlt4f2g",
+    "cid": "bafyreif5clca27mdq4f6m5cjdrun7rohzknv2pjzxopoknvmtf66sppkva",
+    "manifestCid": "bafyreib2no3dluastqh7zbh2ioseqh5prydryvxacjqmtfarvovbojm2ee",
+    "publishedAt": "2026-11-05T03:36:01.989Z"
   }
 }
